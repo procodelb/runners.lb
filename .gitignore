@@ -1,0 +1,16 @@
+node_modules/
+**/node_modules/
+client/dist/
+client/.vite/
+**/dist/
+**/build/
+.env
+**/.env
+client/.env
+server/.env
+.DS_Store
+Thumbs.db
+.vscode/
+*.local
+server/database.sqlite
+server/.server-port
