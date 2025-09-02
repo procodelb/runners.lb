@@ -1,0 +1,40 @@
+{
+  "name": "soufian-erp-server",
+  "version": "1.0.0",
+  "description": "Backend server for Soufian ERP System",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "setup:db": "node scripts/setupDatabase.js",
+    "init:sqlite": "node scripts/initSQLite.js",
+    "init:supabase": "node scripts/initSupabase.js",
+    "init:neon": "node scripts/initNeon.js",
+    "setup:neon": "node scripts/ensureNeonSetup.js",
+    "migrate:to-postgres": "node scripts/migrateToPostgreSQL.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "axios": "^1.11.0",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.4",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "joi": "^17.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "moment": "^2.29.4",
+    "ms": "^2.1.3",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.12.0",
+    "puppeteer": "^24.16.0",
+    "socket.io": "^4.4.7",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
