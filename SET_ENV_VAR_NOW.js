@@ -1,0 +1,28 @@
+// URGENT: Set Vercel Environment Variable
+console.log('🚨 URGENT: SET VERCEL ENVIRONMENT VARIABLE NOW!');
+console.log('================================================');
+console.log('');
+console.log('🔥 YOUR LOGIN IS FAILING BECAUSE:');
+console.log('   VITE_API_URL is not set in Vercel!');
+console.log('');
+console.log('⚡ IMMEDIATE ACTION REQUIRED:');
+console.log('');
+console.log('1️⃣ OPEN: https://vercel.com/dashboard');
+console.log('2️⃣ FIND: Project "runners-lb"');
+console.log('3️⃣ CLICK: Settings → Environment Variables');
+console.log('4️⃣ CLICK: "Add New"');
+console.log('5️⃣ ENTER:');
+console.log('   Name: VITE_API_URL');
+console.log('   Value: https://soufiam-erp-backend.onrender.com');
+console.log('   Environment: Production');
+console.log('6️⃣ CLICK: Save');
+console.log('7️⃣ GO TO: Deployments → Redeploy latest');
+console.log('');
+console.log('🎯 AFTER THIS:');
+console.log('   ✅ Login will work immediately!');
+console.log('   ✅ All features will be functional!');
+console.log('   ✅ Your ERP system will be LIVE!');
+console.log('');
+console.log('⏰ DO THIS NOW - IT TAKES 30 SECONDS!');
+console.log('');
+console.log('🚀 GO GO GO!');

@@ -14,3 +14,4 @@ Thumbs.db
 *.local
 server/database.sqlite
 server/.server-port
+.vercel

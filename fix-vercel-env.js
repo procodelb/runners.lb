@@ -1,0 +1,23 @@
+// Quick fix script to help set Vercel environment variables
+console.log('🔧 VERCEL ENVIRONMENT VARIABLE FIX');
+console.log('==================================');
+console.log('');
+console.log('❌ PROBLEM: VITE_API_URL is not set in Vercel');
+console.log('✅ SOLUTION: Set the environment variable in Vercel dashboard');
+console.log('');
+console.log('📋 STEPS TO FIX:');
+console.log('1. Go to: https://vercel.com/dashboard');
+console.log('2. Find your project: runners-lb');
+console.log('3. Go to: Settings → Environment Variables');
+console.log('4. Add new variable:');
+console.log('   - Name: VITE_API_URL');
+console.log('   - Value: https://soufiam-erp-backend.onrender.com');
+console.log('   - Environment: Production (and Preview)');
+console.log('5. Click Save');
+console.log('6. Go to: Deployments → Redeploy latest');
+console.log('');
+console.log('🎯 ALTERNATIVE: Use Vercel CLI');
+console.log('vercel env add VITE_API_URL production');
+console.log('Value: https://soufiam-erp-backend.onrender.com');
+console.log('');
+console.log('✅ After setting the variable, your login will work!');

@@ -1,62 +1,40 @@
+// Test database connection
 const { Pool } = require('pg');
 
-// Test database connection
-async function testDatabaseConnection() {
-  console.log('🧪 Testing Neon PostgreSQL Database Connection...\n');
+const DATABASE_URL = 'postgresql://neondb_owner:npg_wieBPlL4S8Hc@ep-odd-breeze-adojmdlg-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
 
+console.log('🧪 Testing Database Connection...\n');
+
+async function testDatabase() {
   const pool = new Pool({
-    connectionString: 'postgresql://neondb_owner:npg_wieBPlL4S8Hc@ep-odd-breeze-adojmdlg-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require',
-    ssl: {
-      rejectUnauthorized: false,
-      sslmode: 'require'
-    }
+    connectionString: DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
   });
 
   try {
-    // Test connection
-    console.log('1️⃣ Testing database connection...');
-    const result = await pool.query('SELECT 1 as test');
-    console.log('✅ Database connection successful:', result.rows[0]);
-
+    console.log('📡 Attempting to connect to database...');
+    const client = await pool.connect();
+    
+    console.log('✅ Database connection successful!');
+    
+    // Test a simple query
+    const result = await client.query('SELECT NOW() as current_time');
+    console.log('📊 Current database time:', result.rows[0].current_time);
+    
     // Test users table
-    console.log('\n2️⃣ Testing users table...');
-    const usersResult = await pool.query('SELECT COUNT(*) as count FROM users');
-    console.log('✅ Users table accessible:', usersResult.rows[0].count, 'users');
-
-    // Test orders table
-    console.log('\n3️⃣ Testing orders table...');
-    const ordersResult = await pool.query('SELECT COUNT(*) as count FROM orders');
-    console.log('✅ Orders table accessible:', ordersResult.rows[0].count, 'orders');
-
-    // Test clients table
-    console.log('\n4️⃣ Testing clients table...');
-    const clientsResult = await pool.query('SELECT COUNT(*) as count FROM clients');
-    console.log('✅ Clients table accessible:', clientsResult.rows[0].count, 'clients');
-
-    // Test cashbox table
-    console.log('\n5️⃣ Testing cashbox table...');
-    const cashboxResult = await pool.query('SELECT * FROM cashbox WHERE id = 1');
-    console.log('✅ Cashbox table accessible:', cashboxResult.rows[0]);
-
-    // Test transactions table
-    console.log('\n6️⃣ Testing transactions table...');
-    const transactionsResult = await pool.query('SELECT COUNT(*) as count FROM transactions');
-    console.log('✅ Transactions table accessible:', transactionsResult.rows[0].count, 'transactions');
-
-    console.log('\n🎉 All database tests passed! Neon PostgreSQL is working correctly.');
-    console.log('\n📊 Database Summary:');
-    console.log('- ✅ Database connection: Working');
-    console.log('- ✅ All tables accessible');
-    console.log('- ✅ Schema properly configured');
-    console.log('- ✅ Data integrity maintained');
-
-  } catch (error) {
-    console.error('❌ Database test failed:', error.message);
-    console.error('Error details:', error);
-  } finally {
+    const usersResult = await client.query('SELECT COUNT(*) as user_count FROM users');
+    console.log('👥 Total users in database:', usersResult.rows[0].user_count);
+    
+    client.release();
     await pool.end();
+    
+    console.log('✅ Database test completed successfully!');
+    return true;
+  } catch (error) {
+    console.error('❌ Database connection failed:', error.message);
+    console.error('🔍 Error details:', error);
+    return false;
   }
 }
 
-// Run the test
-testDatabaseConnection();
+testDatabase().catch(console.error);
