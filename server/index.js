@@ -28,8 +28,22 @@ const fs = require('fs');
 const path = require('path');
 
 // Define allowed origins for both CORS and Socket.IO
+function parseEnvOrigins() {
+  const list = [];
+  const vars = [process.env.FRONTEND_URL, process.env.CLIENT_URL];
+  for (const val of vars) {
+    if (!val) continue;
+    const parts = String(val)
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    list.push(...parts);
+  }
+  return Array.from(new Set(list));
+}
+
 const allowedOrigins = [
-  process.env.FRONTEND_URL || process.env.CLIENT_URL || "http://localhost:5173",
+  ...parseEnvOrigins(),
   "http://localhost:5173",
   "http://localhost:5175",
   "http://127.0.0.1:5173",
@@ -39,7 +53,7 @@ const allowedOrigins = [
 const io = socketIo(server, {
   cors: {
     origin: allowedOrigins,
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
   }
@@ -59,17 +73,20 @@ app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
+    // Normalize origin (strip trailing slash)
+    const normalized = origin.replace(/\/$/, '');
+
     // Check if origin is in allowed list
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (allowedOrigins.some(o => o.replace(/\/$/, '') === normalized)) {
       return callback(null, true);
     }
-    
+
     // Allow localhost variations
     if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
       return callback(null, true);
     }
-    
+
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,

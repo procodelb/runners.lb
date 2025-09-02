@@ -1,7 +1,7 @@
 const express = require('express');
 const { query, run } = require('../config/database');
 const mcp = require('../mcp');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, requireAnyRole } = require('../middleware/auth');
 const router = express.Router();
 
 // Get all orders with filtering and pagination
@@ -38,7 +38,7 @@ router.get('/', authenticateToken, async (req, res) => {
 
     const keyword = q || search || brand_name;
     if (keyword) {
-      filterConditions.push(`(o.brand_name LIKE ? OR o.customer_name LIKE ? OR o.order_ref LIKE ?)`);
+      filterConditions.push(`(LOWER(o.brand_name) LIKE LOWER(?) OR LOWER(o.customer_name) LIKE LOWER(?) OR LOWER(o.order_ref) LIKE LOWER(?))`);
       filterParams.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
     }
 
@@ -754,3 +754,97 @@ function generateOrderRef() {
 }
 
 module.exports = router;
+
+// CSV export for orders with same filters
+router.get('/export/csv', authenticateToken, requireAnyRole(['admin']), async (req, res) => {
+  try {
+    const { 
+      status = '', 
+      brand_name = '', 
+      type = '', 
+      driver_id = '',
+      payment_status = '',
+      from_date = '',
+      to_date = '',
+      date_from = '',
+      date_to = '',
+      search = '',
+      q = '',
+      sortBy = 'created_at',
+      sortOrder = 'DESC'
+    } = req.query;
+
+    // Build filter conditions
+    let filterConditions = [];
+    let filterParams = [];
+
+    if (status) { filterConditions.push(`o.status = ?`); filterParams.push(status); }
+
+    const keyword = q || search || brand_name;
+    if (keyword) {
+      filterConditions.push(`(LOWER(o.brand_name) LIKE LOWER(?) OR LOWER(o.customer_name) LIKE LOWER(?) OR LOWER(o.order_ref) LIKE LOWER(?))`);
+      filterParams.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    }
+
+    if (type) { filterConditions.push(`o.type = ?`); filterParams.push(type); }
+    if (driver_id) { filterConditions.push(`o.driver_id = ?`); filterParams.push(driver_id); }
+    if (payment_status) { filterConditions.push(`o.payment_status = ?`); filterParams.push(payment_status); }
+
+    const df = from_date || date_from;
+    const dt = to_date || date_to;
+    if (df) { filterConditions.push(`o.created_at >= ?`); filterParams.push(df); }
+    if (dt) { filterConditions.push(`o.created_at <= ?`); filterParams.push(dt); }
+
+    const whereClause = filterConditions.length > 0 ? `WHERE ${filterConditions.join(' AND ')}` : '';
+
+    const ordersQuery = `
+      SELECT 
+        o.id, o.order_ref, o.type, o.status, o.payment_status, o.brand_name, o.customer_name, o.customer_phone, o.customer_address,
+        o.total_usd, o.total_lbp, o.delivery_fee_usd, o.delivery_fee_lbp, o.driver_fee_usd, o.driver_fee_lbp,
+        o.third_party_fee_usd, o.third_party_fee_lbp, o.created_at, o.updated_at, o.completed_at,
+        d.full_name as driver_name,
+        u.full_name as created_by_name
+      FROM orders o
+      LEFT JOIN drivers d ON o.driver_id = d.id
+      LEFT JOIN users u ON o.created_by = u.id
+      ${whereClause}
+      ORDER BY o.${sortBy} ${sortOrder}
+    `;
+
+    const rows = await query(ordersQuery, filterParams);
+
+    // Build CSV
+    const headers = [
+      'ID','Order Ref','Type','Status','Payment Status','Brand','Customer Name','Customer Phone','Customer Address',
+      'Total USD','Total LBP','Delivery Fee USD','Delivery Fee LBP','Driver Fee USD','Driver Fee LBP',
+      'Third Party Fee USD','Third Party Fee LBP','Driver','Created By','Created At','Updated At','Completed At'
+    ];
+
+    const toCsvValue = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    };
+
+    const lines = [headers.join(',')];
+    for (const r of rows) {
+      const line = [
+        r.id, r.order_ref, r.type, r.status, r.payment_status, r.brand_name, r.customer_name, r.customer_phone, r.customer_address,
+        r.total_usd, r.total_lbp, r.delivery_fee_usd, r.delivery_fee_lbp, r.driver_fee_usd, r.driver_fee_lbp,
+        r.third_party_fee_usd, r.third_party_fee_lbp, r.driver_name, r.created_by_name, r.created_at, r.updated_at, r.completed_at
+      ].map(toCsvValue).join(',');
+      lines.push(line);
+    }
+
+    const csv = lines.join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="orders_export.csv"');
+    res.send(csv);
+  } catch (error) {
+    console.error('Error exporting orders CSV:', error);
+    res.status(500).json({ success: false, message: 'Failed to export orders CSV', error: error.message });
+  }
+});

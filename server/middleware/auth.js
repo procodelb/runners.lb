@@ -69,5 +69,15 @@ const authenticateToken = async (req, res, next) => {
 };
 
 module.exports = {
-  authenticateToken
+  authenticateToken,
+  requireRole: (role) => (req, res, next) => {
+    if (!req.user) return res.status(401).json({ success: false, message: 'Unauthorized' });
+    if (req.user.role !== role) return res.status(403).json({ success: false, message: 'Forbidden: requires ' + role });
+    next();
+  },
+  requireAnyRole: (roles = []) => (req, res, next) => {
+    if (!req.user) return res.status(401).json({ success: false, message: 'Unauthorized' });
+    if (!roles.includes(req.user.role)) return res.status(403).json({ success: false, message: 'Forbidden' });
+    next();
+  }
 };

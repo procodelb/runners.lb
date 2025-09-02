@@ -1,13 +1,13 @@
 const express = require('express');
 const { query, run } = require('../config/database');
 const mcp = require('../mcp');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, requireAnyRole } = require('../middleware/auth');
 const router = express.Router();
 
 // Get cashbox balance (snapshot)
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await query('SELECT balance_usd, balance_lbp, initial_balance_usd, initial_balance_lbp FROM cashbox WHERE id = 1');
+    const result = await query('SELECT balance_usd, balance_lbp FROM cashbox WHERE id = 1');
     const balance = result[0] || { balance_usd: 0, balance_lbp: 0 };
 
     res.json({
@@ -15,8 +15,8 @@ router.get('/', authenticateToken, async (req, res) => {
       data: {
         balance_usd: parseFloat(balance.balance_usd) || 0,
         balance_lbp: parseInt(balance.balance_lbp) || 0,
-        initial_balance_usd: parseFloat(balance.initial_balance_usd || 0),
-        initial_balance_lbp: parseInt(balance.initial_balance_lbp || 0)
+        initial_balance_usd: 0,
+        initial_balance_lbp: 0
       }
     });
   } catch (error) {
@@ -637,7 +637,7 @@ router.delete('/entry/:id', authenticateToken, async (req, res) => {
 });
 
 // Export cashbox data
-router.get('/export', authenticateToken, async (req, res) => {
+router.get('/export', authenticateToken, requireAnyRole(['admin']), async (req, res) => {
   try {
     const { format = 'pdf', from, to } = req.query;
     

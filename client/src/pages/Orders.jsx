@@ -447,6 +447,35 @@ const Orders = () => {
             />
           </div>
         </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={async () => {
+              const params = new URLSearchParams();
+              if (searchTerm) params.set('q', searchTerm);
+              if (selectedStatus) params.set('status', selectedStatus);
+              if (selectedBrand) params.set('brand_name', selectedBrand);
+              if (selectedType) params.set('type', selectedType);
+              if (dateFrom) params.set('date_from', dateFrom);
+              if (dateTo) params.set('date_to', dateTo);
+              const token = localStorage.getItem('token');
+              const resp = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/orders/export/csv?${params.toString()}`, {
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              const blob = await resp.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'orders_export.csv';
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              URL.revokeObjectURL(url);
+            }}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+          >
+            Export CSV
+          </button>
+        </div>
       </div>
 
       {/* Orders Table */}

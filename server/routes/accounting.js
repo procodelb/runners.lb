@@ -84,7 +84,7 @@ router.get('/', authenticateToken, async (req, res) => {
            COALESCE(SUM(CASE WHEN t.direction = 'debit' THEN t.amount_lbp ELSE 0 END), 0)) as balance_lbp
         FROM clients c
         LEFT JOIN transactions t ON c.id = t.actor_id AND t.actor_type = 'client'
-        ${whereClause.replace('t.', '')}
+        ${whereClause}
         GROUP BY c.id, c.business_name, c.contact_person, c.phone
         ORDER BY balance_usd DESC
       `;
@@ -110,7 +110,7 @@ router.get('/', authenticateToken, async (req, res) => {
            COALESCE(SUM(CASE WHEN t.direction = 'debit' THEN t.amount_lbp ELSE 0 END), 0)) as balance_lbp
         FROM drivers d
         LEFT JOIN transactions t ON d.id = t.actor_id AND t.actor_type = 'driver'
-        ${whereClause.replace('t.', '')}
+        ${whereClause}
         GROUP BY d.id, d.full_name, d.phone
         ORDER BY balance_usd DESC
       `;

@@ -1,6 +1,6 @@
 const express = require('express');
 const { query, run, usdToLbp, lbpToUsd, getExchangeRate } = require('../config/database');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, requireAnyRole } = require('../middleware/auth');
 const router = express.Router();
 
 // Get all transactions with filtering and pagination
@@ -40,15 +40,8 @@ router.get('/', authenticateToken, async (req, res) => {
       filterParams.push(actor_id);
     }
 
-    if (from_date) {
-      filterConditions.push(`t.created_at >= ?`);
-      filterParams.push(from_date);
-    }
-
-    if (to_date) {
-      filterConditions.push(`t.created_at <= ?`);
-      filterParams.push(to_date);
-    }
+    if (from_date) { filterConditions.push(`t.created_at >= ?`); filterParams.push(from_date); }
+    if (to_date) { filterConditions.push(`t.created_at <= ?`); filterParams.push(to_date); }
 
     const whereClause = filterConditions.length > 0 
       ? `WHERE ${filterConditions.join(' AND ')}` 
@@ -490,6 +483,82 @@ router.get('/actor/:actorType/:actorId', authenticateToken, async (req, res) => 
 });
 
 module.exports = router;
+
+// CSV export for transactions with same filters
+router.get('/export/csv', authenticateToken, requireAnyRole(['admin']), async (req, res) => {
+  try {
+    const { 
+      tx_type = '', 
+      actor_type = '',
+      actor_id = '',
+      from_date = '',
+      to_date = '',
+      sortBy = 'created_at',
+      sortOrder = 'DESC'
+    } = req.query;
+
+    let filterConditions = [];
+    let filterParams = [];
+    if (tx_type) { filterConditions.push(`t.tx_type = ?`); filterParams.push(tx_type); }
+    if (actor_type) { filterConditions.push(`t.actor_type = ?`); filterParams.push(actor_type); }
+    if (actor_id) { filterConditions.push(`t.actor_id = ?`); filterParams.push(actor_id); }
+    if (from_date) { filterConditions.push(`t.created_at >= ?`); filterParams.push(from_date); }
+    if (to_date) { filterConditions.push(`t.created_at <= ?`); filterParams.push(to_date); }
+
+    const whereClause = filterConditions.length > 0 ? `WHERE ${filterConditions.join(' AND ')}` : '';
+
+    const sql = `
+      SELECT 
+        t.id, t.tx_type, t.amount_usd, t.amount_lbp, t.actor_type, t.actor_id,
+        t.debit_account, t.credit_account, t.description, t.order_id, t.category, t.direction,
+        t.created_at, t.updated_at,
+        u.full_name as created_by_name,
+        d.full_name as driver_name,
+        c.business_name as client_name,
+        o.order_ref as order_reference
+      FROM transactions t
+      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN drivers d ON t.actor_type = 'driver' AND t.actor_id = d.id
+      LEFT JOIN clients c ON t.actor_type = 'client' AND t.actor_id = c.id
+      LEFT JOIN orders o ON t.order_id = o.id
+      ${whereClause}
+      ORDER BY t.${sortBy} ${sortOrder}
+    `;
+
+    const rows = await query(sql, filterParams);
+
+    const headers = [
+      'ID','Type','Amount USD','Amount LBP','Actor Type','Actor ID','Debit','Credit','Description','Order Ref','Category','Direction','Created By','Driver','Client','Created At','Updated At'
+    ];
+
+    const toCsvValue = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    };
+
+    const lines = [headers.join(',')];
+    for (const r of rows) {
+      const line = [
+        r.id, r.tx_type, r.amount_usd, r.amount_lbp, r.actor_type, r.actor_id, r.debit_account, r.credit_account,
+        r.description, r.order_reference, r.category, r.direction, r.created_by_name, r.driver_name, r.client_name,
+        r.created_at, r.updated_at
+      ].map(toCsvValue).join(',');
+      lines.push(line);
+    }
+
+    const csv = lines.join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="transactions_export.csv"');
+    res.send(csv);
+  } catch (e) {
+    console.error('Error exporting transactions CSV:', e);
+    res.status(500).json({ success: false, message: 'Failed to export transactions CSV', error: e.message });
+  }
+});
 
 // Additional entity query alias endpoint: /transactions?driverId=123
 router.get('/by-entity', authenticateToken, async (req, res) => {

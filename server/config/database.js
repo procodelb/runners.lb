@@ -14,20 +14,41 @@ async function initializeDatabase() {
     try {
       const { Pool } = require('pg');
 
-      const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://neondb_owner:npg_wieBPlL4S8Hc@ep-odd-breeze-adojmdlg-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+      // Prefer Railway/standard Postgres envs; do not use a hardcoded fallback
+      const buildUrlFromParts = () => {
+        const host = process.env.PGHOST || process.env.POSTGRES_HOST;
+        const port = process.env.PGPORT || process.env.POSTGRES_PORT || '5432';
+        const database = process.env.PGDATABASE || process.env.POSTGRES_DB;
+        const user = process.env.PGUSER || process.env.POSTGRES_USER;
+        const password = process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD;
+        if (host && database && user && password) {
+          const encUser = encodeURIComponent(user);
+          const encPass = encodeURIComponent(password);
+          return `postgresql://${encUser}:${encPass}@${host}:${port}/${database}`;
+        }
+        return null;
+      };
 
-      console.log('🔧 Attempting to connect to PostgreSQL (Neon)...');
-      console.log('📡 Database URL:', DATABASE_URL.replace(/\/\/.*@/, '//***:***@')); // Hide credentials in logs
+      const rawUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || buildUrlFromParts();
+      if (!rawUrl) {
+        throw new Error('DATABASE_URL/POSTGRES_URL or PG* parts are not set. Unable to connect to PostgreSQL.');
+      }
+
+      const maskedUrl = rawUrl.replace(/\/\/.*@/, '//***:***@');
+      console.log('🔧 Attempting to connect to PostgreSQL (Railway/Cloud)...');
+      console.log('📡 Database URL:', maskedUrl);
+
+      // SSL configuration: enabled by default in prod or when explicitly required
+      const sslMode = String(process.env.DATABASE_SSL || process.env.PGSSLMODE || 'require').toLowerCase();
+      const shouldEnableSsl = ['require', 'true', 'on', '1'].includes(sslMode);
+      const sslConfig = shouldEnableSsl ? { rejectUnauthorized: false } : undefined;
 
       const pool = new Pool({
-        connectionString: DATABASE_URL,
+        connectionString: rawUrl,
         max: Number(process.env.PG_POOL_MAX || 10),
         idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT || 30000),
-        ssl: {
-          rejectUnauthorized: false,
-          sslmode: 'require'
-        },
-        connectionTimeoutMillis: 10000
+        ssl: sslConfig,
+        connectionTimeoutMillis: Number(process.env.PG_CONNECTION_TIMEOUT || 10000)
       });
 
       // Test the connection

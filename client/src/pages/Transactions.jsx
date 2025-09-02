@@ -368,6 +368,29 @@ const Transactions = () => {
         </div>
         <div className="flex items-center space-x-3">
           <button
+            onClick={async () => {
+              const params = new URLSearchParams();
+              Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
+              const token = localStorage.getItem('token');
+              const resp = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/transactions/export/csv?${params.toString()}`, {
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              const blob = await resp.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'transactions_export.csv';
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              URL.revokeObjectURL(url);
+            }}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
+          >
+            <Download className="h-4 w-4" />
+            <span>Export CSV</span>
+          </button>
+          <button
             onClick={() => setShowAddModal(true)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
           >
