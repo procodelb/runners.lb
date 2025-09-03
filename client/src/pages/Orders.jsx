@@ -458,7 +458,8 @@ const Orders = () => {
               if (dateFrom) params.set('date_from', dateFrom);
               if (dateTo) params.set('date_to', dateTo);
               const token = localStorage.getItem('token');
-              const resp = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/orders/export/csv?${params.toString()}`, {
+              const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+              const resp = await fetch(`${apiBase}/api/orders/export/csv?${params.toString()}`, {
                 headers: { Authorization: `Bearer ${token}` }
               });
               const blob = await resp.blob();

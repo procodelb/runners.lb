@@ -25,7 +25,8 @@ export function AuthProvider({ children }) {
         headers.Authorization = `Bearer ${tkn}`;
       }
       
-      const res = await fetch("/api/auth/me", {
+      const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+      const res = await fetch(`${apiBase}/api/auth/me`, {
         headers,
         credentials: 'include', // Include cookies
       });
@@ -112,7 +113,8 @@ export function AuthProvider({ children }) {
     console.log('🔐 AuthContext: Starting login process...');
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/login", {
+      const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+      const res = await fetch(`${apiBase}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -189,7 +191,8 @@ export function AuthProvider({ children }) {
   const signup = async (payload) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/signup", {
+      const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+      const res = await fetch(`${apiBase}/api/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -235,7 +238,8 @@ export function AuthProvider({ children }) {
     
     try {
       // Call logout endpoint to clear server-side cookies
-      await fetch("/api/auth/logout", {
+      const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+      await fetch(`${apiBase}/api/auth/logout`, {
         method: "POST",
         credentials: 'include',
       });

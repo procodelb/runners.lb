@@ -7,18 +7,37 @@ const router = express.Router();
 // Get cashbox balance (snapshot)
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await query('SELECT balance_usd, balance_lbp FROM cashbox WHERE id = 1');
-    const balance = result[0] || { balance_usd: 0, balance_lbp: 0 };
-
-    res.json({
-      success: true,
-      data: {
-        balance_usd: parseFloat(balance.balance_usd) || 0,
-        balance_lbp: parseInt(balance.balance_lbp) || 0,
-        initial_balance_usd: 0,
-        initial_balance_lbp: 0
-      }
-    });
+    // First check if we have a cashbox record
+    const result = await query('SELECT * FROM cashbox WHERE id = 1');
+    
+    if (result.length === 0) {
+      // Create initial cashbox record
+      await run(`
+        INSERT INTO cashbox (id, type, amount_usd, amount_lbp, balance_usd, balance_lbp, initial_balance_usd, initial_balance_lbp, description, created_by) 
+        VALUES (1, 'initial', 0, 0, 0, 0, 0, 0, 'Initial cashbox setup', 1)
+      `);
+      
+      res.json({
+        success: true,
+        data: {
+          balance_usd: 0,
+          balance_lbp: 0,
+          initial_balance_usd: 0,
+          initial_balance_lbp: 0
+        }
+      });
+    } else {
+      const balance = result[0];
+      res.json({
+        success: true,
+        data: {
+          balance_usd: parseFloat(balance.balance_usd) || 0,
+          balance_lbp: parseInt(balance.balance_lbp) || 0,
+          initial_balance_usd: parseFloat(balance.initial_balance_usd) || 0,
+          initial_balance_lbp: parseInt(balance.initial_balance_lbp) || 0
+        }
+      });
+    }
   } catch (error) {
     console.error('Error fetching cashbox balance:', error);
     res.status(500).json({ 
@@ -209,7 +228,9 @@ router.post('/return', authenticateToken, async (req, res) => {
     
     await mcp.update('cashbox', 1, {
       balance_usd: newBalanceUsd,
-      balance_lbp: newBalanceLbp
+      balance_lbp: newBalanceLbp,
+      initial_balance_usd: currentBalance.initial_balance_usd || 0,
+      initial_balance_lbp: currentBalance.initial_balance_lbp || 0
     });
 
     // Create transaction for return
@@ -286,10 +307,18 @@ router.post('/entry', authenticateToken, async (req, res) => {
     
     // Get current balance and update
     const currentBalance = await getCashboxBalance();
-    await mcp.update('cashbox', 1, {
-      balance_usd: currentBalance.balance_usd + usdDelta,
-      balance_lbp: currentBalance.balance_lbp + lbpDelta
-    });
+    await run(`
+      UPDATE cashbox 
+      SET balance_usd = ?, balance_lbp = ?, type = ?, amount_usd = ?, amount_lbp = ?, description = ?
+      WHERE id = 1
+    `, [
+      currentBalance.balance_usd + usdDelta,
+      currentBalance.balance_lbp + lbpDelta,
+      type,
+      amount_usd || 0,
+      amount_lbp || 0,
+      description || ''
+    ]);
 
     const entry = await query(`
       SELECT c.*, u.full_name as created_by_name, d.full_name as driver_name
@@ -752,7 +781,15 @@ router.get('/balance', authenticateToken, async (req, res) => {
 // Helper function to get cashbox balance
 async function getCashboxBalance() {
   try {
-    const result = await query('SELECT balance_usd, balance_lbp FROM cashbox WHERE id = 1');
+    const result = await query('SELECT * FROM cashbox WHERE id = 1');
+    if (result.length === 0) {
+      // Create initial cashbox record if it doesn't exist
+      await run(`
+        INSERT INTO cashbox (id, type, amount_usd, amount_lbp, balance_usd, balance_lbp, initial_balance_usd, initial_balance_lbp, description, created_by) 
+        VALUES (1, 'initial', 0, 0, 0, 0, 0, 0, 'Initial cashbox setup', 1)
+      `);
+      return { balance_usd: 0, balance_lbp: 0 };
+    }
     return result[0] || { balance_usd: 0, balance_lbp: 0 };
   } catch (error) {
     console.error('Error getting cashbox balance:', error);

@@ -129,7 +129,7 @@ router.get('/stats', authenticateToken, async (req, res) => {
       SELECT COUNT(*) as total_completed
       FROM orders o
       ${dateFilter}
-      AND o.status = 'completed' AND o.payment_status = 'paid'
+      WHERE o.status = 'completed' AND o.payment_status = 'paid'
     `, filterParams);
 
     // Get total revenue from completed orders
@@ -141,7 +141,7 @@ router.get('/stats', authenticateToken, async (req, res) => {
         COALESCE(SUM(o.delivery_fee_lbp), 0) as total_delivery_fees_lbp
       FROM orders o
       ${dateFilter}
-      AND o.status = 'completed' AND o.payment_status = 'paid'
+      WHERE o.status = 'completed' AND o.payment_status = 'paid'
     `, filterParams);
 
     // Get orders by type
@@ -153,7 +153,7 @@ router.get('/stats', authenticateToken, async (req, res) => {
         COALESCE(SUM(o.total_lbp), 0) as total_lbp
       FROM orders o
       ${dateFilter}
-      AND o.status = 'completed' AND o.payment_status = 'paid'
+      WHERE o.status = 'completed' AND o.payment_status = 'paid'
       GROUP BY o.type
       ORDER BY count DESC
     `, filterParams);

@@ -372,7 +372,8 @@ const Transactions = () => {
               const params = new URLSearchParams();
               Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
               const token = localStorage.getItem('token');
-              const resp = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/transactions/export/csv?${params.toString()}`, {
+              const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+              const resp = await fetch(`${apiBase}/api/transactions/export/csv?${params.toString()}`, {
                 headers: { Authorization: `Bearer ${token}` }
               });
               const blob = await resp.blob();

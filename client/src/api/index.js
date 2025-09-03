@@ -2,8 +2,11 @@ import axios from 'axios';
 
 // Create axios instance
 const api = axios.create({
-  // Use env var in production; default to Vite dev proxy path
-  baseURL: import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api',
+  // Use relative URL in production to work with Vercel proxy
+  // In development, use the full backend URL
+  baseURL: import.meta.env.DEV 
+    ? (import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api'
+    : '/api',
   timeout: 15000, // Increased timeout
   headers: {
     'Content-Type': 'application/json',

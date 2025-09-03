@@ -12,6 +12,7 @@
     }
   ],
   "routes": [
+    { "src": "/api/(.*)", "dest": "https://soufiam-erp-backend.onrender.com/api/$1" },
     { "src": "/assets/(.*)", "dest": "/assets/$1" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
