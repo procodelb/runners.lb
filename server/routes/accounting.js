@@ -1349,7 +1349,222 @@ router.get('/thirdparty/:name/export/csv', authenticateToken, async (req, res) =
   }
 });
 
-module.exports = router;
+// Cash Out endpoints
+router.post('/clients/:id/cashout', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount_usd = 0, amount_lbp = 0, description = 'Client cashout' } = req.body;
+
+    // Create cashout transaction
+    const transactionData = {
+      tx_type: 'cash_out',
+      amount_usd: parseFloat(amount_usd),
+      amount_lbp: parseInt(amount_lbp),
+      debit_account: 'cashbox',
+      credit_account: 'accounts_receivable',
+      actor_type: 'client',
+      actor_id: parseInt(id),
+      details: {
+        description,
+        reference: `CASHOUT-CLIENT-${id}`,
+        notes: `Cashout for client ID: ${id}`
+      }
+    };
+
+    // Insert transaction
+    const insertResult = await run(`
+      INSERT INTO transactions (tx_type, amount_usd, amount_lbp, debit_account, credit_account, actor_type, actor_id, details, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      transactionData.tx_type,
+      transactionData.amount_usd,
+      transactionData.amount_lbp,
+      transactionData.debit_account,
+      transactionData.credit_account,
+      transactionData.actor_type,
+      transactionData.actor_id,
+      JSON.stringify(transactionData.details),
+      new Date().toISOString()
+    ]);
+
+    // Update client balance (reduce accounts receivable)
+    await run(`
+      UPDATE clients 
+      SET balance_usd = COALESCE(balance_usd, 0) - ?, 
+          balance_lbp = COALESCE(balance_lbp, 0) - ?,
+          updated_at = ?
+      WHERE id = ?
+    `, [amount_usd, amount_lbp, new Date().toISOString(), id]);
+
+    // Update cashbox balance
+    await run(`
+      UPDATE cashbox 
+      SET balance_usd = COALESCE(balance_usd, 0) - ?, 
+          balance_lbp = COALESCE(balance_lbp, 0) - ?,
+          updated_at = ?
+    `, [amount_usd, amount_lbp, new Date().toISOString()]);
+
+    res.json({
+      success: true,
+      message: 'Client cashout completed successfully',
+      data: {
+        transaction_id: insertResult.lastID,
+        amount_usd,
+        amount_lbp,
+        description
+      }
+    });
+
+  } catch (error) {
+    console.error('Client cashout error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process client cashout',
+      error: error.message
+    });
+  }
+});
+
+router.post('/drivers/:id/cashout', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount_usd = 0, amount_lbp = 0, description = 'Driver cashout' } = req.body;
+
+    // Create cashout transaction
+    const transactionData = {
+      tx_type: 'driver_payment',
+      amount_usd: parseFloat(amount_usd),
+      amount_lbp: parseInt(amount_lbp),
+      debit_account: 'driver_payable',
+      credit_account: 'cashbox',
+      actor_type: 'driver',
+      actor_id: parseInt(id),
+      details: {
+        description,
+        reference: `CASHOUT-DRIVER-${id}`,
+        notes: `Cashout for driver ID: ${id}`
+      }
+    };
+
+    // Insert transaction
+    const insertResult = await run(`
+      INSERT INTO transactions (tx_type, amount_usd, amount_lbp, debit_account, credit_account, actor_type, actor_id, details, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      transactionData.tx_type,
+      transactionData.amount_usd,
+      transactionData.amount_lbp,
+      transactionData.debit_account,
+      transactionData.credit_account,
+      transactionData.actor_type,
+      transactionData.actor_id,
+      JSON.stringify(transactionData.details),
+      new Date().toISOString()
+    ]);
+
+    // Update driver balance (reduce driver payable)
+    await run(`
+      UPDATE drivers 
+      SET balance_usd = COALESCE(balance_usd, 0) - ?, 
+          balance_lbp = COALESCE(balance_lbp, 0) - ?,
+          updated_at = ?
+      WHERE id = ?
+    `, [amount_usd, amount_lbp, new Date().toISOString(), id]);
+
+    // Update cashbox balance
+    await run(`
+      UPDATE cashbox 
+      SET balance_usd = COALESCE(balance_usd, 0) - ?, 
+          balance_lbp = COALESCE(balance_lbp, 0) - ?,
+          updated_at = ?
+    `, [amount_usd, amount_lbp, new Date().toISOString()]);
+
+    res.json({
+      success: true,
+      message: 'Driver cashout completed successfully',
+      data: {
+        transaction_id: insertResult.lastID,
+        amount_usd,
+        amount_lbp,
+        description
+      }
+    });
+
+  } catch (error) {
+    console.error('Driver cashout error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process driver cashout',
+      error: error.message
+    });
+  }
+});
+
+router.post('/thirdparty/:name/cashout', authenticateToken, async (req, res) => {
+  try {
+    const { name } = req.params;
+    const { amount_usd = 0, amount_lbp = 0, description = 'Third party cashout' } = req.body;
+
+    // Create cashout transaction
+    const transactionData = {
+      tx_type: 'third_party_fee',
+      amount_usd: parseFloat(amount_usd),
+      amount_lbp: parseInt(amount_lbp),
+      debit_account: 'third_party_payable',
+      credit_account: 'cashbox',
+      actor_type: 'third_party',
+      actor_id: null,
+      details: {
+        description,
+        reference: `CASHOUT-TP-${name}`,
+        notes: `Cashout for third party: ${name}`
+      }
+    };
+
+    // Insert transaction
+    const insertResult = await run(`
+      INSERT INTO transactions (tx_type, amount_usd, amount_lbp, debit_account, credit_account, actor_type, actor_id, details, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      transactionData.tx_type,
+      transactionData.amount_usd,
+      transactionData.amount_lbp,
+      transactionData.debit_account,
+      transactionData.credit_account,
+      transactionData.actor_type,
+      transactionData.actor_id,
+      JSON.stringify(transactionData.details),
+      new Date().toISOString()
+    ]);
+
+    // Update cashbox balance
+    await run(`
+      UPDATE cashbox 
+      SET balance_usd = COALESCE(balance_usd, 0) - ?, 
+          balance_lbp = COALESCE(balance_lbp, 0) - ?,
+          updated_at = ?
+    `, [amount_usd, amount_lbp, new Date().toISOString()]);
+
+    res.json({
+      success: true,
+      message: 'Third party cashout completed successfully',
+      data: {
+        transaction_id: insertResult.lastID,
+        amount_usd,
+        amount_lbp,
+        description
+      }
+    });
+
+  } catch (error) {
+    console.error('Third party cashout error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process third party cashout',
+      error: error.message
+    });
+  }
+});
 
 // Get balance for an entity (client, driver, third_party)
 router.get('/balance', authenticateToken, async (req, res) => {

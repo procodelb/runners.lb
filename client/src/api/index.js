@@ -1,10 +1,31 @@
 import axios from 'axios';
 
 // Resolve API base URL with environment override, then window, then fallback to deployed URL
-const resolvedBaseUrl =
-  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL) ||
-  (typeof window !== 'undefined' && window.__API_BASE_URL__) ||
-  'https://soufiam-erp-backend.onrender.com/api';
+const resolvedBaseUrl = (() => {
+  // Check for environment variable first
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  
+  // Check for window global override
+  if (typeof window !== 'undefined' && window.__API_BASE_URL__) {
+    return window.__API_BASE_URL__;
+  }
+  
+  // Auto-detect environment based on current hostname
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:3001/api';
+    }
+    if (hostname.includes('vercel.app')) {
+      return 'https://soufiam-erp-backend.onrender.com/api';
+    }
+  }
+  
+  // Default fallback to deployed URL
+  return 'https://soufiam-erp-backend.onrender.com/api';
+})();
 
 // Create axios instance
 const api = axios.create({
@@ -303,6 +324,18 @@ export const endpoints = {
   
   // Accounting
   accounting: {
+    overview: '/accounting/overview',
+    clients: '/accounting/clients',
+    drivers: '/accounting/drivers',
+    thirdparty: '/accounting/thirdparty',
+    clientDetails: (id) => `/accounting/clients/${id}`,
+    driverDetails: (id) => `/accounting/drivers/${id}`,
+    thirdpartyDetails: (name) => `/accounting/thirdparty/${name}`,
+    clientCashout: (id) => `/accounting/clients/${id}/cashout`,
+    driverCashout: (id) => `/accounting/drivers/${id}/cashout`,
+    thirdpartyCashout: (name) => `/accounting/thirdparty/${name}/cashout`,
+    statement: '/accounting/statement',
+    balance: '/accounting/balance',
     transactions: '/accounting/transactions',
     reports: '/accounting/reports',
     balances: '/accounting/balances',

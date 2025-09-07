@@ -249,10 +249,10 @@ const Transactions = () => {
 
   const getActorName = (transaction) => {
     if (transaction.actor_type === 'driver') {
-      const driver = drivers?.data?.find(d => d.id === transaction.actor_id);
+      const driver = Array.isArray(drivers) ? drivers.find(d => d.id === transaction.actor_id) : undefined;
       return driver?.full_name || 'Unknown Driver';
     } else if (transaction.actor_type === 'client') {
-      const client = clients?.data?.find(c => c.id === transaction.actor_id);
+      const client = Array.isArray(clients) ? clients.find(c => c.id === transaction.actor_id) : undefined;
       return client?.business_name || 'Unknown Client';
     }
     return transaction.actor_type || 'System';
