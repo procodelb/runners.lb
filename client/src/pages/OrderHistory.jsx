@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery } from 'react-query';
 import { motion } from 'framer-motion';
-import { Calendar, Filter, Search, FileText, Download, Eye } from 'lucide-react';
+import { Calendar, Filter, Search, FileText, Download, Eye, Users, Truck, DollarSign, Building } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'react-hot-toast';
 import api from '../api';
 
 const OrderHistory = () => {
+  const [activeTab, setActiveTab] = useState('orders'); // 'orders' or 'clients'
   const [filters, setFilters] = useState({
     from_date: '',
     to_date: '',
@@ -17,12 +18,23 @@ const OrderHistory = () => {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showOrderModal, setShowOrderModal] = useState(false);
 
-  const { data: orders, isLoading, error, refetch } = useQuery(
+  const { data: orders, isLoading: ordersLoading, error: ordersError, refetch: refetchOrders } = useQuery(
     ['orderHistory', filters],
     () => api.get('/orders/history', { params: filters }),
     {
       refetchOnWindowFocus: false,
-      retry: 1
+      retry: 1,
+      select: (response) => response.data?.data || []
+    }
+  );
+
+  const { data: clients, isLoading: clientsLoading, error: clientsError, refetch: refetchClients } = useQuery(
+    ['clientsHistory', filters],
+    () => api.get('/accounting/clients', { params: { from_date: filters.from_date, to_date: filters.to_date } }),
+    {
+      refetchOnWindowFocus: false,
+      retry: 1,
+      select: (response) => response.data?.data || []
     }
   );
 
@@ -31,6 +43,16 @@ const OrderHistory = () => {
     () => api.get('/drivers'),
     { 
       refetchOnWindowFocus: false,
+      select: (response) => response.data?.data || []
+    }
+  );
+
+  const { data: transactions } = useQuery(
+    ['transactions', filters],
+    () => api.get('/transactions', { params: { from_date: filters.from_date, to_date: filters.to_date } }),
+    {
+      refetchOnWindowFocus: false,
+      retry: 1,
       select: (response) => response.data?.data || []
     }
   );
@@ -48,6 +70,17 @@ const OrderHistory = () => {
       type: ''
     });
   };
+
+  const refetch = () => {
+    if (activeTab === 'orders') {
+      refetchOrders();
+    } else {
+      refetchClients();
+    }
+  };
+
+  const isLoading = activeTab === 'orders' ? ordersLoading : clientsLoading;
+  const error = activeTab === 'orders' ? ordersError : clientsError;
 
   const exportToPDF = async (order) => {
     try {
@@ -106,12 +139,52 @@ const OrderHistory = () => {
       >
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Order History</h1>
-          <p className="text-gray-600 mt-2">View all completed orders (status + payment status completed)</p>
+          <p className="text-gray-600 mt-2">
+            {activeTab === 'orders' 
+              ? 'View all completed orders and delivery history' 
+              : 'View client transaction history and cash out accounts'
+            }
+          </p>
         </div>
         <div className="flex items-center space-x-3">
           <span className="text-sm text-gray-500">
-            Total: {orders?.length || 0} orders
+            Total: {activeTab === 'orders' ? (orders?.length || 0) : (clients?.length || 0)} {activeTab === 'orders' ? 'orders' : 'clients'}
           </span>
+        </div>
+      </motion.div>
+
+      {/* Tabs */}
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="bg-white rounded-lg shadow-sm border border-gray-200"
+      >
+        <div className="border-b border-gray-200">
+          <nav className="flex space-x-8 px-6">
+            <button
+              onClick={() => setActiveTab('orders')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
+                activeTab === 'orders'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <Truck className="w-4 h-4" />
+              Order History
+            </button>
+            <button
+              onClick={() => setActiveTab('clients')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
+                activeTab === 'clients'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              Clients History
+            </button>
+          </nav>
         </div>
       </motion.div>
 
@@ -216,154 +289,29 @@ const OrderHistory = () => {
         </div>
       </motion.div>
 
-      {/* Orders Table */}
+      {/* Content based on active tab */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
         className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden"
       >
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Order Details
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Customer
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Driver
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Financial
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Completed
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {orders?.map((order) => (
-                <motion.tr
-                  key={order.id}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="hover:bg-gray-50 transition-colors"
-                >
-                  <td className="px-4 py-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm font-medium text-gray-900">
-                          #{order.order_ref}
-                        </span>
-                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          order.type === 'ecommerce' ? 'bg-blue-100 text-blue-800' :
-                          order.type === 'instant' ? 'bg-green-100 text-green-800' :
-                          'bg-purple-100 text-purple-800'
-                        }`}>
-                          {order.type}
-                        </span>
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {order.brand_name && (
-                          <span className="block">Brand: {order.brand_name}</span>
-                        )}
-                        {order.voucher_code && (
-                          <span className="block">Voucher: {order.voucher_code}</span>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                  
-                  <td className="px-4 py-3">
-                    <div className="space-y-1">
-                      <div className="text-sm font-medium text-gray-900">
-                        {order.customer_name || 'N/A'}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {order.customer_phone || 'N/A'}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {order.customer_address || 'N/A'}
-                      </div>
-                    </div>
-                  </td>
-                  
-                  <td className="px-4 py-3">
-                    <div className="space-y-1">
-                      <div className="text-sm font-medium text-gray-900">
-                        {order.driver_name || 'N/A'}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {order.driver_phone || 'N/A'}
-                      </div>
-                    </div>
-                  </td>
-                  
-                  <td className="px-4 py-3">
-                    <div className="space-y-1">
-                      {order.total_usd > 0 && (
-                        <div className="text-sm font-medium text-gray-900">
-                          ${order.total_usd.toFixed(2)}
-                        </div>
-                      )}
-                      {order.total_lbp > 0 && (
-                        <div className="text-sm text-gray-600">
-                          {order.total_lbp.toLocaleString()} LBP
-                        </div>
-                      )}
-                      {order.driver_fee_lbp > 0 && (
-                        <div className="text-xs text-gray-500">
-                          Driver Fee: {order.driver_fee_lbp.toLocaleString()} LBP
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  
-                  <td className="px-4 py-3">
-                    <div className="text-sm text-gray-900">
-                      {order.completed_at ? format(new Date(order.completed_at), 'MMM dd, yyyy') : 'N/A'}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {order.completed_at ? format(new Date(order.completed_at), 'HH:mm') : ''}
-                    </div>
-                  </td>
-                  
-                  <td className="px-4 py-3">
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => viewOrderDetails(order)}
-                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                        title="View Details"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => exportToPDF(order)}
-                        className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                        title="Export PDF"
-                      >
-                        <Download className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        
-        {orders?.data?.length === 0 && (
-          <div className="text-center py-12">
-            <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500 text-lg">No completed orders found</p>
-            <p className="text-gray-400 text-sm">Try adjusting your filters or check back later</p>
-          </div>
+        {activeTab === 'orders' ? (
+          <OrdersTable 
+            orders={orders} 
+            drivers={drivers}
+            onViewOrder={viewOrderDetails}
+            onExportPDF={exportToPDF}
+          />
+        ) : (
+          <ClientsHistoryTable 
+            clients={clients} 
+            transactions={transactions}
+            onViewClient={(client) => {
+              setSelectedOrder(client);
+              setShowOrderModal(true);
+            }}
+          />
         )}
       </motion.div>
 
@@ -514,6 +462,322 @@ const OrderHistory = () => {
               </div>
             </div>
           </motion.div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Orders Table Component
+const OrdersTable = ({ orders, drivers, onViewOrder, onExportPDF }) => {
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Order Details
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Customer
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Driver
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Financial
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Completed
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody className="bg-white divide-y divide-gray-200">
+          {orders?.map((order) => (
+            <motion.tr
+              key={order.id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="hover:bg-gray-50 transition-colors"
+            >
+              <td className="px-4 py-3">
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium text-gray-900">
+                      #{order.order_ref}
+                    </span>
+                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                      order.type === 'ecommerce' ? 'bg-blue-100 text-blue-800' :
+                      order.type === 'instant' ? 'bg-green-100 text-green-800' :
+                      'bg-purple-100 text-purple-800'
+                    }`}>
+                      {order.type}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    {order.brand_name && (
+                      <span className="block">Brand: {order.brand_name}</span>
+                    )}
+                    {order.voucher_code && (
+                      <span className="block">Voucher: {order.voucher_code}</span>
+                    )}
+                  </div>
+                </div>
+              </td>
+              
+              <td className="px-4 py-3">
+                <div className="space-y-1">
+                  <div className="text-sm font-medium text-gray-900">
+                    {order.customer_name || 'N/A'}
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    {order.customer_phone || 'N/A'}
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {order.customer_address || 'N/A'}
+                  </div>
+                </div>
+              </td>
+              
+              <td className="px-4 py-3">
+                <div className="space-y-1">
+                  <div className="text-sm font-medium text-gray-900">
+                    {order.driver_name || 'N/A'}
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    {order.driver_phone || 'N/A'}
+                  </div>
+                </div>
+              </td>
+              
+              <td className="px-4 py-3">
+                <div className="space-y-1">
+                  {order.total_usd > 0 && (
+                    <div className="text-sm font-medium text-gray-900">
+                      ${order.total_usd.toFixed(2)}
+                    </div>
+                  )}
+                  {order.total_lbp > 0 && (
+                    <div className="text-sm text-gray-600">
+                      {order.total_lbp.toLocaleString()} LBP
+                    </div>
+                  )}
+                  {order.driver_fee_lbp > 0 && (
+                    <div className="text-xs text-gray-500">
+                      Driver Fee: {order.driver_fee_lbp.toLocaleString()} LBP
+                    </div>
+                  )}
+                </div>
+              </td>
+              
+              <td className="px-4 py-3">
+                <div className="text-sm text-gray-900">
+                  {order.completed_at ? format(new Date(order.completed_at), 'MMM dd, yyyy') : 'N/A'}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {order.completed_at ? format(new Date(order.completed_at), 'HH:mm') : ''}
+                </div>
+              </td>
+              
+              <td className="px-4 py-3">
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => onViewOrder(order)}
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    title="View Details"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => onExportPDF(order)}
+                    className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                    title="Export PDF"
+                  >
+                    <Download className="h-4 w-4" />
+                  </button>
+                </div>
+              </td>
+            </motion.tr>
+          ))}
+        </tbody>
+      </table>
+      
+      {orders?.length === 0 && (
+        <div className="text-center py-12">
+          <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <p className="text-gray-500 text-lg">No completed orders found</p>
+          <p className="text-gray-400 text-sm">Try adjusting your filters or check back later</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Clients History Table Component
+const ClientsHistoryTable = ({ clients, transactions, onViewClient }) => {
+  const getClientTransactions = (clientId) => {
+    return transactions?.filter(tx => 
+      tx.actor_type === 'client' && tx.actor_id === clientId
+    ) || [];
+  };
+
+  const getCashOutTransactions = (clientId) => {
+    return getClientTransactions(clientId).filter(tx => 
+      tx.tx_type === 'cash_out' || tx.tx_type === 'client_payment'
+    );
+  };
+
+  const getTotalCashOut = (clientId) => {
+    const cashOuts = getCashOutTransactions(clientId);
+    return cashOuts.reduce((acc, tx) => ({
+      usd: acc.usd + (tx.amount_usd || 0),
+      lbp: acc.lbp + (tx.amount_lbp || 0)
+    }), { usd: 0, lbp: 0 });
+  };
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Client Details
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Contact Info
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Total Orders
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Cash Out History
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Balance
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody className="bg-white divide-y divide-gray-200">
+          {clients?.map((client) => {
+            const clientTransactions = getClientTransactions(client.id);
+            const cashOutTotal = getTotalCashOut(client.id);
+            
+            return (
+              <motion.tr
+                key={client.id}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="hover:bg-gray-50 transition-colors"
+              >
+                <td className="px-4 py-3">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium text-gray-900">
+                      {client.business_name || 'N/A'}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {client.contact_person || 'N/A'}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      ID: {client.id}
+                    </div>
+                  </div>
+                </td>
+                
+                <td className="px-4 py-3">
+                  <div className="space-y-1">
+                    <div className="text-sm text-gray-900">
+                      {client.phone || 'N/A'}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {client.email || 'N/A'}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {client.address || 'N/A'}
+                    </div>
+                  </div>
+                </td>
+                
+                <td className="px-4 py-3">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium text-gray-900">
+                      {client.total_orders || 0} orders
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      ${(client.total_usd || 0).toFixed(2)}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {(client.total_lbp || 0).toLocaleString()} LBP
+                    </div>
+                  </div>
+                </td>
+                
+                <td className="px-4 py-3">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium text-gray-900">
+                      {getCashOutTransactions(client.id).length} cashouts
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      ${cashOutTotal.usd.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {cashOutTotal.lbp.toLocaleString()} LBP
+                    </div>
+                  </div>
+                </td>
+                
+                <td className="px-4 py-3">
+                  <div className="space-y-1">
+                    <div className={`text-sm font-medium ${
+                      (client.balance_usd || 0) > 0 ? 'text-green-600' : 'text-red-600'
+                    }`}>
+                      ${(client.balance_usd || 0).toFixed(2)}
+                    </div>
+                    <div className={`text-xs ${
+                      (client.balance_lbp || 0) > 0 ? 'text-green-600' : 'text-red-600'
+                    }`}>
+                      {(client.balance_lbp || 0).toLocaleString()} LBP
+                    </div>
+                  </div>
+                </td>
+                
+                <td className="px-4 py-3">
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => onViewClient(client)}
+                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      title="View Details"
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        // TODO: Implement cash out functionality
+                        toast.success('Cash out functionality will be implemented');
+                      }}
+                      className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                      title="Cash Out"
+                    >
+                      <DollarSign className="h-4 w-4" />
+                    </button>
+                  </div>
+                </td>
+              </motion.tr>
+            );
+          })}
+        </tbody>
+      </table>
+      
+      {clients?.length === 0 && (
+        <div className="text-center py-12">
+          <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <p className="text-gray-500 text-lg">No clients found</p>
+          <p className="text-gray-400 text-sm">Try adjusting your filters or check back later</p>
         </div>
       )}
     </div>

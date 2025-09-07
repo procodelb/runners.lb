@@ -16,7 +16,7 @@ const resolvedBaseUrl = (() => {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return 'http://localhost:3001/api';
+      return 'http://localhost:5000/api';
     }
     if (hostname.includes('vercel.app')) {
       return 'https://soufiam-erp-backend.onrender.com/api';

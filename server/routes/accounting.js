@@ -1644,3 +1644,5 @@ router.get('/statement', authenticateToken, async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to generate statement', error: e.message });
   }
 });
+
+module.exports = router;

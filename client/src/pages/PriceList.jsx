@@ -23,7 +23,7 @@ const PriceList = () => {
 
   const { data: prices, isLoading, error, refetch } = useQuery(
     ['prices'],
-    () => api.get('/prices'),
+    () => api.get('/price-list'),
     {
       refetchOnWindowFocus: false,
       retry: 1,
@@ -32,7 +32,7 @@ const PriceList = () => {
   );
 
   const addPriceMutation = useMutation(
-    (data) => api.post('/prices', data),
+    (data) => api.post('/price-list', data),
     {
       onSuccess: () => {
         toast.success('Price added successfully!');
@@ -53,7 +53,7 @@ const PriceList = () => {
   );
 
   const updatePriceMutation = useMutation(
-    ({ id, data }) => api.put(`/prices/${id}`, data),
+    ({ id, data }) => api.put(`/price-list/${id}`, data),
     {
       onSuccess: () => {
         toast.success('Price updated successfully!');
@@ -68,7 +68,7 @@ const PriceList = () => {
   );
 
   const deletePriceMutation = useMutation(
-    (id) => api.delete(`/prices/${id}`),
+    (id) => api.delete(`/price-list/${id}`),
     {
       onSuccess: () => {
         toast.success('Price deleted successfully!');
@@ -81,7 +81,7 @@ const PriceList = () => {
   );
 
   const togglePriceStatusMutation = useMutation(
-    ({ id, is_active }) => api.patch(`/prices/${id}/toggle-status`, { is_active }),
+    ({ id, is_active }) => api.patch(`/price-list/${id}/toggle-status`, { is_active }),
     {
       onSuccess: () => {
         toast.success('Price status updated successfully!');
