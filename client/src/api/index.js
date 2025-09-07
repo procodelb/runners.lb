@@ -1,12 +1,14 @@
 import axios from 'axios';
 
+// Resolve API base URL with environment override, then window, then fallback to deployed URL
+const resolvedBaseUrl =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL) ||
+  (typeof window !== 'undefined' && window.__API_BASE_URL__) ||
+  'https://soufiam-erp-backend.onrender.com/api';
+
 // Create axios instance
 const api = axios.create({
-  // Use relative URL in production to work with Vercel proxy
-  // In development, use the full backend URL
-  baseURL: import.meta.env.DEV 
-    ? (import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api'
-    : '/api',
+  baseURL: resolvedBaseUrl,
   timeout: 15000, // Increased timeout
   headers: {
     'Content-Type': 'application/json',

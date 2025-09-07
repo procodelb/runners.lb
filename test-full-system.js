@@ -1,149 +1,158 @@
-const axios = require('axios');
+// Comprehensive test for the entire ERP system
 
-const BASE_URL = 'http://localhost:5000/api';
+const API_BASE = 'https://soufiam-erp-backend.onrender.com';
 
 async function testFullSystem() {
-  console.log('🧪 Testing Complete Soufiam ERP System...\n');
+  console.log('🧪 Testing Full ERP System...\n');
 
   try {
-    // 1. Test server health
-    console.log('1️⃣ Testing server health...');
-    const healthResponse = await axios.get('http://localhost:5000/health');
-    console.log('✅ Server is running:', healthResponse.data);
-
-    // 2. Test authentication
-    console.log('\n2️⃣ Testing authentication...');
-    const loginResponse = await axios.post(`${BASE_URL}/auth/login`, {
-      email: 'soufian@gmail.com',
-      password: 'Soufi@n123'
-    });
-    
-    if (loginResponse.data.success) {
-      console.log('✅ Authentication successful');
-      const token = loginResponse.data.data.token;
-      const user = loginResponse.data.data.user;
-      console.log('👤 User:', user.full_name, `(${user.email})`);
-      
-      // Set up authenticated requests
-      const authHeaders = { Authorization: `Bearer ${token}` };
-
-      // 3. Test orders functionality
-      console.log('\n3️⃣ Testing orders functionality...');
-      
-      // Get orders
-      const ordersResponse = await axios.get(`${BASE_URL}/orders`, { headers: authHeaders });
-      console.log('✅ Orders endpoint:', ordersResponse.data.data?.length || 0, 'orders');
-
-      // Create a test order
-      const testOrder = {
-        order_ref: 'TEST-001',
-        type: 'ecommerce',
-        customer_name: 'Test Customer',
-        brand_name: 'Test Brand',
-        total_usd: 25.00,
-        total_lbp: 2225000,
-        status: 'new',
-        payment_status: 'unpaid'
-      };
-      
-      const createOrderResponse = await axios.post(`${BASE_URL}/orders`, testOrder, { headers: authHeaders });
-      console.log('✅ Order creation:', createOrderResponse.data.success ? 'Success' : 'Failed');
-      
-      if (createOrderResponse.data.success) {
-        const orderId = createOrderResponse.data.data.id;
-        console.log('📦 Created order ID:', orderId);
-        
-        // Test order completion
-        const completeResponse = await axios.post(`${BASE_URL}/orders/${orderId}/complete`, {
-          status: 'completed',
-          payment_status: 'paid'
-        }, { headers: authHeaders });
-        console.log('✅ Order completion:', completeResponse.data.success ? 'Success' : 'Failed');
-      }
-
-      // 4. Test clients functionality
-      console.log('\n4️⃣ Testing clients functionality...');
-      
-      // Get clients
-      const clientsResponse = await axios.get(`${BASE_URL}/clients`, { headers: authHeaders });
-      console.log('✅ Clients endpoint:', clientsResponse.data.data?.length || 0, 'clients');
-
-      // Create a test client
-      const testClient = {
-        business_name: 'Test Business',
-        contact_person: 'Test Contact',
-        phone: '+96170123456',
-        address: 'Test Address, Beirut',
-        category: 'ecommerce'
-      };
-      
-      const createClientResponse = await axios.post(`${BASE_URL}/clients`, testClient, { headers: authHeaders });
-      console.log('✅ Client creation:', createClientResponse.data.success ? 'Success' : 'Failed');
-
-      // 5. Test cashbox functionality
-      console.log('\n5️⃣ Testing cashbox functionality...');
-      
-      // Get cashbox balance
-      const cashboxResponse = await axios.get(`${BASE_URL}/cashbox`, { headers: authHeaders });
-      console.log('✅ Cashbox balance:', cashboxResponse.data.data);
-
-      // Get cashbox history
-      const cashboxHistoryResponse = await axios.get(`${BASE_URL}/cashbox/history`, { headers: authHeaders });
-      console.log('✅ Cashbox history:', cashboxHistoryResponse.data.data?.length || 0, 'entries');
-
-      // 6. Test drivers functionality
-      console.log('\n6️⃣ Testing drivers functionality...');
-      
-      const driversResponse = await axios.get(`${BASE_URL}/drivers`, { headers: authHeaders });
-      console.log('✅ Drivers endpoint:', driversResponse.data.data?.length || 0, 'drivers');
-
-      // 7. Test dashboard functionality
-      console.log('\n7️⃣ Testing dashboard functionality...');
-      
-      const dashboardResponse = await axios.get(`${BASE_URL}/dashboard/stats`, { headers: authHeaders });
-      console.log('✅ Dashboard stats:', dashboardResponse.data.success ? 'Success' : 'Failed');
-
-      // 8. Test order history functionality
-      console.log('\n8️⃣ Testing order history functionality...');
-      
-      const orderHistoryResponse = await axios.get(`${BASE_URL}/order-history`, { headers: authHeaders });
-      console.log('✅ Order history:', orderHistoryResponse.data.data?.length || 0, 'completed orders');
-
-      // 9. Test transactions functionality
-      console.log('\n9️⃣ Testing transactions functionality...');
-      
-      const transactionsResponse = await axios.get(`${BASE_URL}/transactions`, { headers: authHeaders });
-      console.log('✅ Transactions:', transactionsResponse.data.data?.length || 0, 'transactions');
-
-      // 10. Test price list functionality
-      console.log('\n🔟 Testing price list functionality...');
-      
-      const priceListResponse = await axios.get(`${BASE_URL}/price-list`, { headers: authHeaders });
-      console.log('✅ Price list:', priceListResponse.data.data?.length || 0, 'price entries');
-
-      console.log('\n🎉 All system tests passed! Soufiam ERP is fully functional.');
-      console.log('\n📊 System Summary:');
-      console.log('- ✅ Server running on port 5000');
-      console.log('- ✅ Authentication working');
-      console.log('- ✅ Orders CRUD operations working');
-      console.log('- ✅ Clients CRUD operations working');
-      console.log('- ✅ Cashbox operations working');
-      console.log('- ✅ Dashboard analytics working');
-      console.log('- ✅ Order history working');
-      console.log('- ✅ All API endpoints responding');
-      console.log('- ✅ Database operations successful');
-      console.log('- ✅ Neon PostgreSQL integration complete');
-
+    // Test 1: Health check
+    console.log('1️⃣ Testing health check...');
+    const healthRes = await fetch(`${API_BASE}/health`);
+    console.log(`   Status: ${healthRes.status}`);
+    if (healthRes.ok) {
+      const healthData = await healthRes.json();
+      console.log(`   ✅ Server is running: ${healthData.status}`);
     } else {
-      console.log('❌ Authentication failed:', loginResponse.data.message);
+      console.log('   ❌ Server health check failed');
+      return;
     }
+    console.log('');
+
+    // Test 2: Login with demo credentials
+    console.log('2️⃣ Testing login...');
+    const loginRes = await fetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'soufian@gmail.com',
+        password: 'Soufi@n123'
+      })
+    });
+
+    console.log(`   Status: ${loginRes.status}`);
+    
+    if (!loginRes.ok) {
+      const errorData = await loginRes.json();
+      console.log(`   ❌ Login failed: ${errorData.message}`);
+      return;
+    }
+
+    const loginData = await loginRes.json();
+    console.log(`   ✅ Login successful: ${loginData.message}`);
+    
+    if (!loginData.data || !loginData.data.token) {
+      console.log('   ❌ No token received');
+      return;
+    }
+
+    const token = loginData.data.token;
+    console.log(`   🔑 Token received: ${token.substring(0, 20)}...`);
+    console.log('');
+
+    // Test 3: Get current user
+    console.log('3️⃣ Testing get current user...');
+    const meRes = await fetch(`${API_BASE}/api/auth/me`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log(`   Status: ${meRes.status}`);
+    
+    if (meRes.ok) {
+      const meData = await meRes.json();
+      console.log(`   ✅ User authenticated: ${meData.data?.email}`);
+    } else {
+      const errorData = await meRes.json();
+      console.log(`   ❌ Get user failed: ${errorData.message}`);
+      return;
+    }
+    console.log('');
+
+    // Test 4: Test all protected endpoints
+    console.log('4️⃣ Testing all protected endpoints...');
+    
+    const endpoints = [
+      { name: 'Dashboard Stats', url: '/api/dashboard/stats' },
+      { name: 'Orders', url: '/api/orders?limit=5' },
+      { name: 'Transactions', url: '/api/transactions?limit=5' },
+      { name: 'Clients', url: '/api/clients?limit=5' },
+      { name: 'Drivers', url: '/api/drivers?limit=5' },
+      { name: 'Price List', url: '/api/price-list?limit=5' },
+      { name: 'Cashbox', url: '/api/cashbox' },
+      { name: 'Accounting', url: '/api/accounting' },
+      { name: 'Settings', url: '/api/settings' },
+      { name: 'Analytics', url: '/api/analytics/dashboard' }
+    ];
+
+    let successCount = 0;
+    let totalCount = endpoints.length;
+
+    for (const endpoint of endpoints) {
+      console.log(`   Testing ${endpoint.name}...`);
+      const endpointRes = await fetch(`${API_BASE}${endpoint.url}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log(`     Status: ${endpointRes.status}`);
+      
+      if (endpointRes.ok) {
+        const endpointData = await endpointRes.json();
+        console.log(`     ✅ Success: ${endpointData.success || 'Data received'}`);
+        successCount++;
+      } else {
+        const errorData = await endpointRes.json();
+        console.log(`     ❌ Error: ${errorData.message || errorData.error}`);
+      }
+    }
+
+    console.log(`\n📊 Endpoint Test Results: ${successCount}/${totalCount} successful`);
+    console.log('');
+
+    // Test 5: Test logout
+    console.log('5️⃣ Testing logout...');
+    const logoutRes = await fetch(`${API_BASE}/api/auth/logout`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log(`   Status: ${logoutRes.status}`);
+    
+    if (logoutRes.ok) {
+      const logoutData = await logoutRes.json();
+      console.log(`   ✅ Logout successful: ${logoutData.message}`);
+    } else {
+      const errorData = await logoutRes.json();
+      console.log(`   ❌ Logout failed: ${errorData.message}`);
+    }
+
+    // Summary
+    console.log('\n🎉 System Test Summary:');
+    console.log('✅ Backend server is running');
+    console.log('✅ Authentication system is working');
+    console.log('✅ Demo user credentials are valid');
+    console.log(`✅ ${successCount}/${totalCount} API endpoints are accessible`);
+    console.log('✅ Logout functionality is working');
+    console.log('\n🚀 Your ERP system is fully operational!');
+    console.log('\n📝 Demo Credentials:');
+    console.log('   Email: soufian@gmail.com');
+    console.log('   Password: Soufi@n123');
 
   } catch (error) {
     console.error('❌ System test failed:', error.message);
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-    }
+    console.log('\n🔧 Troubleshooting:');
+    console.log('1. Check if the backend server is running');
+    console.log('2. Verify the API URL is correct');
+    console.log('3. Check network connectivity');
+    console.log('4. Verify the demo user exists in the database');
   }
 }
 

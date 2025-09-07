@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -24,6 +24,7 @@ import {
 import api from '../api';
 import { format } from 'date-fns';
 import { formatCurrency } from '../utils/formatters';
+import html2canvas from 'html2canvas';
 
 const Accounting = () => {
   const [selectedView, setSelectedView] = useState('overview');
@@ -39,38 +40,49 @@ const Accounting = () => {
 
   const queryClient = useQueryClient();
 
-  // Fetch accounting data
-  const { data: accountingData, isLoading, error, refetch } = useQuery(
-    ['accounting', selectedView, dateRange, searchTerm],
-    () => api.get('/accounting', { 
-      params: { 
-        view: selectedView, 
-        from_date: dateRange.from, 
-        to_date: dateRange.to,
-        search: searchTerm 
-      } 
-    }),
-    {
-      select: (data) => data.data || {},
-      refetchInterval: 30000 // Refresh every 30 seconds
-    }
+  // Fetch list data per view
+  const { data: listData, isLoading, error, refetch } = useQuery(
+    ['accounting-list', selectedView, dateRange, searchTerm],
+    async () => {
+      if (selectedView === 'clients') {
+        const res = await api.get('/accounting/clients', { params: { from_date: dateRange.from, to_date: dateRange.to, search: searchTerm } });
+        return res.data?.data || [];
+      }
+      if (selectedView === 'drivers') {
+        const res = await api.get('/accounting/drivers', { params: { from_date: dateRange.from, to_date: dateRange.to, search: searchTerm } });
+        return res.data?.data || [];
+      }
+      if (selectedView === 'third_parties') {
+        const res = await api.get('/accounting/thirdparty', { params: { from_date: dateRange.from, to_date: dateRange.to, search: searchTerm } });
+        return res.data?.data || [];
+      }
+      // Fallback to overview endpoint already available
+      const res = await api.get('/accounting/overview');
+      return res.data?.data || {};
+    },
+    { refetchInterval: 30000 }
   );
 
-  // Fetch transactions
-  const { data: transactions = [] } = useQuery(
-    ['transactions', selectedView, selectedEntity?.id, dateRange],
-    () => api.get('/transactions', { 
-      params: { 
-        actor_type: selectedView === 'overview' ? '' : selectedView.slice(0, -1),
-        actor_id: selectedEntity?.id,
-        from_date: dateRange.from,
-        to_date: dateRange.to
-      } 
-    }),
-    {
-      select: (response) => response.data?.data || [],
-      enabled: selectedView !== 'overview' || !!selectedEntity
-    }
+  // Fetch entity details when selected
+  const { data: entityDetails } = useQuery(
+    ['accounting-entity', selectedView, selectedEntity?.id || selectedEntity?.name, dateRange],
+    async () => {
+      if (!selectedEntity) return null;
+      if (selectedView === 'clients') {
+        const res = await api.get(`/accounting/clients/${selectedEntity.id}`, { params: { from_date: dateRange.from, to_date: dateRange.to } });
+        return res.data?.data;
+      }
+      if (selectedView === 'drivers') {
+        const res = await api.get(`/accounting/drivers/${selectedEntity.id}`, { params: { from_date: dateRange.from, to_date: dateRange.to } });
+        return res.data?.data;
+      }
+      if (selectedView === 'third_parties') {
+        const res = await api.get(`/accounting/thirdparty/${selectedEntity.name}`, { params: { from_date: dateRange.from, to_date: dateRange.to } });
+        return res.data?.data;
+      }
+      return null;
+    },
+    { enabled: !!selectedEntity && selectedView !== 'overview' }
   );
 
   // Add transaction mutation
@@ -127,6 +139,40 @@ const Accounting = () => {
     }
   };
 
+  const exportSectionAsImage = async (elementRef, filenamePrefix = 'account') => {
+    try {
+      if (!elementRef?.current) return;
+      const canvas = await html2canvas(elementRef.current, { scale: 2, useCORS: true });
+      const dataUrl = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = `${filenamePrefix}-${new Date().toISOString().slice(0,10)}.png`;
+      link.click();
+    } catch (e) {
+      toast.error('Failed to export image');
+    }
+  };
+
+  // Cashout actions
+  const cashoutMutation = useMutation(
+    async ({ scope, idOrName, amount_usd = 0, amount_lbp = 0, description }) => {
+      if (scope === 'clients') {
+        return api.post(`/accounting/clients/${idOrName}/cashout`, { amount_usd, amount_lbp, description });
+      } else if (scope === 'drivers') {
+        return api.post(`/accounting/drivers/${idOrName}/cashout`, { amount_usd, amount_lbp, description });
+      } else if (scope === 'third_parties') {
+        return api.post(`/accounting/thirdparty/${idOrName}/cashout`, { amount_usd, amount_lbp, description });
+      }
+    },
+    {
+      onSuccess: () => {
+        toast.success('Cashout completed');
+        refetch();
+      },
+      onError: (e) => toast.error(e.response?.data?.message || 'Cashout failed')
+    }
+  );
+
   const handleTransactionSubmit = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -171,12 +217,8 @@ const Accounting = () => {
   };
 
   const getViewData = () => {
-    if (selectedView === 'overview') {
-      return accountingData?.overview || {};
-    }
-    // Ensure we return an array for list views
-    const data = accountingData?.[selectedView];
-    return Array.isArray(data) ? data : [];
+    if (selectedView === 'overview') return listData || {};
+    return Array.isArray(listData) ? listData : [];
   };
 
   const getTotalAmounts = (items) => {
@@ -215,7 +257,7 @@ const Accounting = () => {
   }
 
   const viewData = getViewData();
-  const totalAmounts = getTotalAmounts(viewData);
+  const totalAmounts = getTotalAmounts(selectedView === 'overview' ? [] : viewData);
 
   // Safety check - if no data is available, show a message
   if (!accountingData && !isLoading) {
@@ -321,9 +363,11 @@ const Accounting = () => {
               viewType={selectedView}
               onEntitySelect={handleEntitySelect}
               selectedEntity={selectedEntity}
-              transactions={transactions}
+              entityDetails={entityDetails}
               onViewReceipt={handleViewReceipt}
               onDownloadStatement={downloadStatement}
+              onCashout={(payload) => cashoutMutation.mutate(payload)}
+              onExportImage={exportSectionAsImage}
             />
           )}
         </div>
@@ -692,7 +736,7 @@ const OverviewView = ({ data, totalAmounts }) => {
 };
 
 // Entity List Component
-const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, transactions, onViewReceipt, onDownloadStatement }) => {
+const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, entityDetails, onViewReceipt, onDownloadStatement, onCashout, onExportImage }) => {
   const getEntityIcon = (type) => {
     switch (type) {
       case 'clients': return Users;
@@ -713,6 +757,17 @@ const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, transa
 
   const Icon = getEntityIcon(viewType);
   const entityTitle = getEntityTitle(viewType);
+
+  const sectionRef = useRef(null);
+
+  const handleCashout = () => {
+    if (!selectedEntity) return;
+    const amount_usd = parseFloat(prompt('Enter cashout amount in USD (0 if none):', '0')) || 0;
+    const amount_lbp = parseInt(prompt('Enter cashout amount in LBP (0 if none):', '0')) || 0;
+    const description = prompt('Optional description:', 'Cashout');
+    const idOrName = viewType === 'third_parties' ? selectedEntity.name : selectedEntity.id;
+    onCashout({ scope: viewType, idOrName, amount_usd, amount_lbp, description });
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -757,13 +812,19 @@ const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, transa
       </div>
 
       {/* Transactions */}
-      <div className="lg:col-span-2">
+      <div className="lg:col-span-2" ref={sectionRef}>
         <h3 className="text-lg font-semibold mb-4">
           {selectedEntity ? `${entityTitle} Transactions` : 'All Transactions'}
         </h3>
         {selectedEntity ? (
           <div className="space-y-3">
             <div className="flex justify-end gap-2 mb-2">
+              <button
+                onClick={() => onExportImage(sectionRef, `${entityTitle.toLowerCase()}-${selectedEntity.id || selectedEntity.name}`)}
+                className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+              >
+                Export Image
+              </button>
               <button
                 onClick={() => onDownloadStatement(viewType.slice(0,-1), selectedEntity.id, 'csv')}
                 className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
@@ -776,8 +837,14 @@ const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, transa
               >
                 Download PDF
               </button>
+              <button
+                onClick={handleCashout}
+                className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+              >
+                Cash Out
+              </button>
             </div>
-            {transactions.map((tx) => (
+            {(entityDetails?.transactions || []).map((tx) => (
               <motion.div
                 key={tx.id}
                 initial={{ opacity: 0, x: 20 }}
@@ -820,7 +887,7 @@ const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, transa
                 </div>
               </motion.div>
             ))}
-            {transactions.length === 0 && (
+            {(entityDetails?.transactions || []).length === 0 && (
               <div className="text-center py-8 text-gray-500">
                 No transactions found for this {entityTitle.toLowerCase()}
               </div>

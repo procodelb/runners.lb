@@ -26,6 +26,7 @@ const app = express();
 const server = http.createServer(app);
 const fs = require('fs');
 const path = require('path');
+const mcp = require('./mcp');
 
 // Define allowed origins for both CORS and Socket.IO
 function parseEnvOrigins() {
@@ -47,7 +48,8 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5175",
   "http://127.0.0.1:5173",
-  "http://127.0.0.1:5175"
+  "http://127.0.0.1:5175",
+  "https://runners-lb.vercel.app"
 ];
 
 const io = socketIo(server, {
@@ -94,6 +96,15 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   exposedHeaders: ['Set-Cookie']
 }));
+
+// Ensure preflight requests are handled for all routes
+app.options('*', cors({
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Set-Cookie']
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -126,14 +137,14 @@ io.on('connection', (socket) => {
 // Make io available to routes
 app.set('io', io);
 
-// Health check
+// Health checks - always 200 and lowercase status per contract
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // API Health check (for client)
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Public routes
@@ -175,7 +186,19 @@ const startServer = async () => {
   try {
     const portManager = new PortManager();
     const availablePort = await portManager.getAvailablePort(PORT, true); // Try to kill existing process first
-    
+
+    // Kick off MCP readiness check but don't block server start
+    (async () => {
+      try {
+        console.log('🧠 Checking MCP Layer/database readiness in background...');
+        await mcp.ensureReady();
+        console.log('✅ MCP Layer confirmed database readiness');
+      } catch (err) {
+        console.error('❌ MCP initialization failed (non-blocking):', err.message);
+        console.error('👉 Check DATABASE_URL, credentials, SSL settings, and Neon project status.');
+      }
+    })();
+
     server.listen(availablePort, () => {
       console.log(`🚀 Soufian ERP Server running on port ${availablePort}`);
       console.log(`📱 Socket.IO server initialized`);

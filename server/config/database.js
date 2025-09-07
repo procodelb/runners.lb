@@ -35,13 +35,15 @@ async function initializeDatabase() {
       }
 
       const maskedUrl = rawUrl.replace(/\/\/.*@/, '//***:***@');
-      console.log('🔧 Attempting to connect to PostgreSQL (Railway/Cloud)...');
+      console.log('🔧 Attempting to connect to Neon PostgreSQL...');
       console.log('📡 Database URL:', maskedUrl);
 
-      // SSL configuration: enabled by default in prod or when explicitly required
+      // SSL configuration: Neon requires SSL and may require channel binding
       const sslMode = String(process.env.DATABASE_SSL || process.env.PGSSLMODE || 'require').toLowerCase();
       const shouldEnableSsl = ['require', 'true', 'on', '1'].includes(sslMode);
       const sslConfig = shouldEnableSsl ? { rejectUnauthorized: false } : undefined;
+      const channelBinding = (new URL(rawUrl)).searchParams.get('channel_binding') || process.env.PG_CHANNEL_BINDING || 'require';
+      console.log('🔐 SSL enabled:', shouldEnableSsl, '| channel_binding:', channelBinding);
 
       const pool = new Pool({
         connectionString: rawUrl,
@@ -121,7 +123,10 @@ async function initializeDatabase() {
       return true;
     } catch (error) {
       console.error('❌ PostgreSQL connection failed:', error.message);
-      console.log('🔄 Falling back to SQLite...');
+      console.error(`📋 Troubleshooting:
+ - Verify DATABASE_URL credentials (user/password/db/host)
+ - Ensure Neon project allows connections and password is correct
+ - Keep sslmode=require and channel_binding=require in your URL`);
       return false;
     }
   }

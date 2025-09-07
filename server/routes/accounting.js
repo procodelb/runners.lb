@@ -1,5 +1,5 @@
 const express = require('express');
-const { query } = require('../config/database');
+const { query, run } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const router = express.Router();
 
@@ -164,7 +164,7 @@ router.get('/', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      data: result
+      data: result || {}
     });
 
   } catch (error) {
@@ -214,18 +214,20 @@ router.get('/overview', authenticateToken, async (req, res) => {
     `;
     const transactionsResult = await query(transactionsQuery);
 
+    // Flatten structure for frontend expectations in Accounting.jsx OverviewView
     res.json({
       success: true,
       data: {
-        revenue: {
-          usd: parseFloat(revenue.total_revenue_usd) || 0,
-          lbp: parseInt(revenue.total_revenue_lbp) || 0
-        },
-        pending: {
-          usd: parseFloat(pending.pending_usd) || 0,
-          lbp: parseInt(pending.pending_lbp) || 0
-        },
-        transactions: transactionsResult || []
+        total_usd: parseFloat(revenue.total_revenue_usd) || 0,
+        total_lbp: parseInt(revenue.total_revenue_lbp) || 0,
+        pending_usd: parseFloat(pending.pending_usd) || 0,
+        pending_lbp: parseInt(pending.pending_lbp) || 0,
+        expenses_usd: 0,
+        expenses_lbp: 0,
+        cashbox_usd: 0,
+        cashbox_lbp: 0,
+        recent_transactions: transactionsResult || [],
+        top_clients: []
       }
     });
   } catch (error) {
@@ -287,6 +289,1062 @@ router.get('/reports', authenticateToken, async (req, res) => {
       message: 'Failed to fetch financial reports',
       error: error.message,
       data: [] // Always return empty array on error
+    });
+  }
+});
+
+// Get all clients with accounting details
+router.get('/clients', authenticateToken, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search = '' } = req.query;
+    const offset = (page - 1) * limit;
+
+    let whereClause = '';
+    let params = [];
+
+    if (search) {
+      whereClause = 'WHERE c.business_name ILIKE ? OR c.contact_person ILIKE ?';
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const clientsQuery = `
+      SELECT 
+        c.*,
+        COUNT(DISTINCT o.id) as total_orders,
+        COALESCE(SUM(o.total_usd), 0) as total_revenue_usd,
+        COALESCE(SUM(o.total_lbp), 0) as total_revenue_lbp,
+        COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_usd ELSE 0 END), 0) as paid_amount_usd,
+        COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_lbp ELSE 0 END), 0) as paid_amount_lbp,
+        COALESCE(SUM(CASE WHEN o.payment_status = 'unpaid' THEN o.total_usd ELSE 0 END), 0) as pending_amount_usd,
+        COALESCE(SUM(CASE WHEN o.payment_status = 'unpaid' THEN o.total_lbp ELSE 0 END), 0) as pending_amount_lbp,
+        MAX(o.created_at) as last_order_date
+      FROM clients c
+      LEFT JOIN orders o ON c.business_name = o.customer_name OR c.id::text = o.customer_name
+      ${whereClause}
+      GROUP BY c.id, c.business_name, c.contact_person, c.phone, c.address, c.instagram, c.website, c.google_location, c.category, c.created_at, c.updated_at
+      ORDER BY total_revenue_usd DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    params.push(limit, offset);
+    const clients = await query(clientsQuery, params);
+
+    res.json({
+      success: true,
+      data: clients
+    });
+  } catch (error) {
+    console.error('Error fetching accounting clients:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch accounting clients',
+      error: error.message 
+    });
+  }
+});
+
+// Get client details with orders and transactions
+router.get('/clients/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { from_date, to_date } = req.query;
+
+    // Get client info
+    const clientQuery = 'SELECT * FROM clients WHERE id = ?';
+    const [client] = await query(clientQuery, [id]);
+
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    // Get client orders
+    let ordersWhereClause = 'WHERE o.customer_name = ? OR o.customer_name = ?';
+    let ordersParams = [client.business_name, id.toString()];
+
+    if (from_date) {
+      ordersWhereClause += ' AND o.created_at >= ?';
+      ordersParams.push(from_date);
+    }
+    if (to_date) {
+      ordersWhereClause += ' AND o.created_at <= ?';
+      ordersParams.push(to_date);
+    }
+
+    const ordersQuery = `
+      SELECT 
+        o.*,
+        d.full_name as driver_name,
+        d.phone as driver_phone
+      FROM orders o
+      LEFT JOIN drivers d ON o.driver_id = d.id
+      ${ordersWhereClause}
+      ORDER BY o.created_at DESC
+    `;
+
+    const orders = await query(ordersQuery, ordersParams);
+
+    // Get client transactions
+    const transactionsQuery = `
+      SELECT 
+        t.*,
+        u.full_name as created_by_name,
+        o.order_ref as order_reference
+      FROM transactions t
+      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN orders o ON t.order_id = o.id
+      WHERE t.actor_type = 'client' AND t.actor_id = ?
+      ORDER BY t.created_at DESC
+    `;
+
+    const transactions = await query(transactionsQuery, [id]);
+
+    // Calculate balances
+    const balanceQuery = `
+      SELECT 
+        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_usd ELSE -amount_usd END), 0) AS balance_usd,
+        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_lbp ELSE -amount_lbp END), 0) AS balance_lbp
+      FROM transactions
+      WHERE actor_type = 'client' AND actor_id = ?
+    `;
+    const [balance] = await query(balanceQuery, [id]);
+
+    res.json({
+      success: true,
+      data: {
+        client,
+        orders,
+        transactions,
+        balance: {
+          usd: parseFloat(balance.balance_usd) || 0,
+          lbp: parseInt(balance.balance_lbp) || 0
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching client details:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch client details',
+      error: error.message 
+    });
+  }
+});
+
+// Cash out client account
+router.post('/clients/:id/cashout', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount_usd = 0, amount_lbp = 0, description = 'Client cashout' } = req.body;
+
+    // Get client info
+    const [client] = await query('SELECT * FROM clients WHERE id = ?', [id]);
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    // Get current balance
+    const balanceQuery = `
+      SELECT 
+        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_usd ELSE -amount_usd END), 0) AS balance_usd,
+        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_lbp ELSE -amount_lbp END), 0) AS balance_lbp
+      FROM transactions
+      WHERE actor_type = 'client' AND actor_id = ?
+    `;
+    const [balance] = await query(balanceQuery, [id]);
+
+    const currentBalanceUsd = parseFloat(balance.balance_usd) || 0;
+    const currentBalanceLbp = parseInt(balance.balance_lbp) || 0;
+
+    // Validate cashout amounts
+    if (amount_usd > currentBalanceUsd || amount_lbp > currentBalanceLbp) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cashout amount exceeds available balance' 
+      });
+    }
+
+    // Create cashout transaction
+    const transactionQuery = `
+      INSERT INTO transactions (
+        tx_type, amount_usd, amount_lbp, actor_type, actor_id,
+        description, direction, category, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const transactionParams = [
+      'client_cashout',
+      amount_usd,
+      amount_lbp,
+      'client',
+      id,
+      description,
+      'debit',
+      'cashout',
+      req.user.id
+    ];
+
+    const transactionResult = await run(transactionQuery, transactionParams);
+
+    // Create order history record
+    const historyQuery = `
+      INSERT INTO order_history (
+        client_id, action_type, amount_usd, amount_lbp,
+        description, transaction_id, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    await run(historyQuery, [
+      id,
+      'cashout',
+      amount_usd,
+      amount_lbp,
+      description,
+      transactionResult.id,
+      req.user.id
+    ]);
+
+    // Create accounting snapshot
+    const snapshotQuery = `
+      INSERT INTO accounting_snapshots (
+        entity_type, entity_id, snapshot_type,
+        total_amount_usd, total_amount_lbp,
+        net_balance_usd, net_balance_lbp,
+        snapshot_data, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const snapshotData = {
+      client_name: client.business_name,
+      cashout_amount_usd: amount_usd,
+      cashout_amount_lbp: amount_lbp,
+      previous_balance_usd: currentBalanceUsd,
+      previous_balance_lbp: currentBalanceLbp,
+      new_balance_usd: currentBalanceUsd - amount_usd,
+      new_balance_lbp: currentBalanceLbp - amount_lbp
+    };
+
+    await run(snapshotQuery, [
+      'client',
+      id,
+      'cashout',
+      amount_usd,
+      amount_lbp,
+      currentBalanceUsd - amount_usd,
+      currentBalanceLbp - amount_lbp,
+      JSON.stringify(snapshotData),
+      req.user.id
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Client cashout completed successfully',
+      data: {
+        transaction_id: transactionResult.id,
+        amount_usd,
+        amount_lbp,
+        new_balance_usd: currentBalanceUsd - amount_usd,
+        new_balance_lbp: currentBalanceLbp - amount_lbp
+      }
+    });
+  } catch (error) {
+    console.error('Error processing client cashout:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to process client cashout',
+      error: error.message 
+    });
+  }
+});
+
+// Export client account as CSV
+router.get('/clients/:id/export/csv', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { from_date, to_date } = req.query;
+
+    // Get client info
+    const [client] = await query('SELECT * FROM clients WHERE id = ?', [id]);
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    // Get client transactions
+    let whereClause = 'WHERE t.actor_type = \'client\' AND t.actor_id = ?';
+    let params = [id];
+
+    if (from_date) {
+      whereClause += ' AND t.created_at >= ?';
+      params.push(from_date);
+    }
+    if (to_date) {
+      whereClause += ' AND t.created_at <= ?';
+      params.push(to_date);
+    }
+
+    const transactionsQuery = `
+      SELECT 
+        t.*,
+        u.full_name as created_by_name,
+        o.order_ref as order_reference
+      FROM transactions t
+      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN orders o ON t.order_id = o.id
+      ${whereClause}
+      ORDER BY t.created_at ASC
+    `;
+
+    const transactions = await query(transactionsQuery, params);
+
+    // Build CSV
+    const headers = [
+      'Date', 'Type', 'Amount USD', 'Amount LBP', 'Direction', 'Description', 
+      'Order Reference', 'Created By', 'Transaction ID'
+    ];
+
+    const csvRows = transactions.map(tx => [
+      new Date(tx.created_at).toISOString().split('T')[0],
+      tx.tx_type || '',
+      tx.amount_usd || 0,
+      tx.amount_lbp || 0,
+      tx.direction || '',
+      (tx.description || '').replace(/\n|\r/g, ' '),
+      tx.order_reference || '',
+      tx.created_by_name || '',
+      tx.id
+    ]);
+
+    const csv = [headers.join(','), ...csvRows.map(row => row.join(','))].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=client-${client.business_name}-account.csv`);
+    res.send(csv);
+  } catch (error) {
+    console.error('Error exporting client CSV:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to export client CSV',
+      error: error.message 
+    });
+  }
+});
+
+// Get all drivers with accounting details
+router.get('/drivers', authenticateToken, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search = '' } = req.query;
+    const offset = (page - 1) * limit;
+
+    let whereClause = '';
+    let params = [];
+
+    if (search) {
+      whereClause = 'WHERE d.full_name ILIKE ? OR d.phone ILIKE ?';
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const driversQuery = `
+      SELECT 
+        d.*,
+        COUNT(DISTINCT o.id) as total_deliveries,
+        COUNT(DISTINCT do.id) as total_operations,
+        COALESCE(SUM(o.driver_fee_usd), 0) as total_delivery_fees_usd,
+        COALESCE(SUM(o.driver_fee_lbp), 0) as total_delivery_fees_lbp,
+        COALESCE(SUM(do.amount_usd), 0) as total_operation_amount_usd,
+        COALESCE(SUM(do.amount_lbp), 0) as total_operation_amount_lbp,
+        COALESCE(SUM(CASE WHEN do.operation_type = 'fuel_expense' THEN do.amount_lbp ELSE 0 END), 0) as total_fuel_expenses_lbp,
+        MAX(o.created_at) as last_delivery_date
+      FROM drivers d
+      LEFT JOIN orders o ON d.id = o.driver_id
+      LEFT JOIN driver_operations do ON d.id = do.driver_id
+      ${whereClause}
+      GROUP BY d.id, d.full_name, d.phone, d.address, d.notes, d.active, d.default_fee_lbp, d.default_fee_usd, d.created_at, d.updated_at
+      ORDER BY total_delivery_fees_usd DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    params.push(limit, offset);
+    const drivers = await query(driversQuery, params);
+
+    res.json({
+      success: true,
+      data: drivers
+    });
+  } catch (error) {
+    console.error('Error fetching accounting drivers:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch accounting drivers',
+      error: error.message 
+    });
+  }
+});
+
+// Get driver details with operations and transactions
+router.get('/drivers/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { from_date, to_date } = req.query;
+
+    // Get driver info
+    const driverQuery = 'SELECT * FROM drivers WHERE id = ?';
+    const [driver] = await query(driverQuery, [id]);
+
+    if (!driver) {
+      return res.status(404).json({ success: false, message: 'Driver not found' });
+    }
+
+    // Get driver orders
+    let ordersWhereClause = 'WHERE o.driver_id = ?';
+    let ordersParams = [id];
+
+    if (from_date) {
+      ordersWhereClause += ' AND o.created_at >= ?';
+      ordersParams.push(from_date);
+    }
+    if (to_date) {
+      ordersWhereClause += ' AND o.created_at <= ?';
+      ordersParams.push(to_date);
+    }
+
+    const ordersQuery = `
+      SELECT 
+        o.*,
+        c.business_name as client_name,
+        c.phone as client_phone
+      FROM orders o
+      LEFT JOIN clients c ON o.customer_name = c.business_name OR o.customer_name = c.id::text
+      ${ordersWhereClause}
+      ORDER BY o.created_at DESC
+    `;
+
+    const orders = await query(ordersQuery, ordersParams);
+
+    // Get driver operations
+    let operationsWhereClause = 'WHERE do.driver_id = ?';
+    let operationsParams = [id];
+
+    if (from_date) {
+      operationsWhereClause += ' AND do.created_at >= ?';
+      operationsParams.push(from_date);
+    }
+    if (to_date) {
+      operationsWhereClause += ' AND do.created_at <= ?';
+      operationsParams.push(to_date);
+    }
+
+    const operationsQuery = `
+      SELECT 
+        do.*,
+        u.full_name as created_by_name,
+        o.order_ref as order_reference
+      FROM driver_operations do
+      LEFT JOIN users u ON do.created_by = u.id
+      LEFT JOIN orders o ON do.order_id = o.id
+      ${operationsWhereClause}
+      ORDER BY do.created_at DESC
+    `;
+
+    const operations = await query(operationsQuery, operationsParams);
+
+    // Get driver transactions
+    const transactionsQuery = `
+      SELECT 
+        t.*,
+        u.full_name as created_by_name,
+        o.order_ref as order_reference
+      FROM transactions t
+      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN orders o ON t.order_id = o.id
+      WHERE t.actor_type = 'driver' AND t.actor_id = ?
+      ORDER BY t.created_at DESC
+    `;
+
+    const transactions = await query(transactionsQuery, [id]);
+
+    // Calculate balances
+    const balanceQuery = `
+      SELECT 
+        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_usd ELSE -amount_usd END), 0) AS balance_usd,
+        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_lbp ELSE -amount_lbp END), 0) AS balance_lbp
+      FROM transactions
+      WHERE actor_type = 'driver' AND actor_id = ?
+    `;
+    const [balance] = await query(balanceQuery, [id]);
+
+    res.json({
+      success: true,
+      data: {
+        driver,
+        orders,
+        operations,
+        transactions,
+        balance: {
+          usd: parseFloat(balance.balance_usd) || 0,
+          lbp: parseInt(balance.balance_lbp) || 0
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching driver details:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch driver details',
+      error: error.message 
+    });
+  }
+});
+
+// Cash out driver account
+router.post('/drivers/:id/cashout', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount_usd = 0, amount_lbp = 0, description = 'Driver cashout' } = req.body;
+
+    // Get driver info
+    const [driver] = await query('SELECT * FROM drivers WHERE id = ?', [id]);
+    if (!driver) {
+      return res.status(404).json({ success: false, message: 'Driver not found' });
+    }
+
+    // Get current balance
+    const balanceQuery = `
+      SELECT 
+        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_usd ELSE -amount_usd END), 0) AS balance_usd,
+        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_lbp ELSE -amount_lbp END), 0) AS balance_lbp
+      FROM transactions
+      WHERE actor_type = 'driver' AND actor_id = ?
+    `;
+    const [balance] = await query(balanceQuery, [id]);
+
+    const currentBalanceUsd = parseFloat(balance.balance_usd) || 0;
+    const currentBalanceLbp = parseInt(balance.balance_lbp) || 0;
+
+    // Validate cashout amounts
+    if (amount_usd > currentBalanceUsd || amount_lbp > currentBalanceLbp) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cashout amount exceeds available balance' 
+      });
+    }
+
+    // Create cashout transaction
+    const transactionQuery = `
+      INSERT INTO transactions (
+        tx_type, amount_usd, amount_lbp, actor_type, actor_id,
+        description, direction, category, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const transactionParams = [
+      'driver_cashout',
+      amount_usd,
+      amount_lbp,
+      'driver',
+      id,
+      description,
+      'debit',
+      'cashout',
+      req.user.id
+    ];
+
+    const transactionResult = await run(transactionQuery, transactionParams);
+
+    // Create order history record
+    const historyQuery = `
+      INSERT INTO order_history (
+        driver_id, action_type, amount_usd, amount_lbp,
+        description, transaction_id, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    await run(historyQuery, [
+      id,
+      'cashout',
+      amount_usd,
+      amount_lbp,
+      description,
+      transactionResult.id,
+      req.user.id
+    ]);
+
+    // Create accounting snapshot
+    const snapshotQuery = `
+      INSERT INTO accounting_snapshots (
+        entity_type, entity_id, snapshot_type,
+        total_amount_usd, total_amount_lbp,
+        net_balance_usd, net_balance_lbp,
+        snapshot_data, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const snapshotData = {
+      driver_name: driver.full_name,
+      cashout_amount_usd: amount_usd,
+      cashout_amount_lbp: amount_lbp,
+      previous_balance_usd: currentBalanceUsd,
+      previous_balance_lbp: currentBalanceLbp,
+      new_balance_usd: currentBalanceUsd - amount_usd,
+      new_balance_lbp: currentBalanceLbp - amount_lbp
+    };
+
+    await run(snapshotQuery, [
+      'driver',
+      id,
+      'cashout',
+      amount_usd,
+      amount_lbp,
+      currentBalanceUsd - amount_usd,
+      currentBalanceLbp - amount_lbp,
+      JSON.stringify(snapshotData),
+      req.user.id
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Driver cashout completed successfully',
+      data: {
+        transaction_id: transactionResult.id,
+        amount_usd,
+        amount_lbp,
+        new_balance_usd: currentBalanceUsd - amount_usd,
+        new_balance_lbp: currentBalanceLbp - amount_lbp
+      }
+    });
+  } catch (error) {
+    console.error('Error processing driver cashout:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to process driver cashout',
+      error: error.message 
+    });
+  }
+});
+
+// Export driver account as CSV
+router.get('/drivers/:id/export/csv', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { from_date, to_date } = req.query;
+
+    // Get driver info
+    const [driver] = await query('SELECT * FROM drivers WHERE id = ?', [id]);
+    if (!driver) {
+      return res.status(404).json({ success: false, message: 'Driver not found' });
+    }
+
+    // Get driver transactions and operations
+    let whereClause = 'WHERE (t.actor_type = \'driver\' AND t.actor_id = ?) OR (do.driver_id = ?)';
+    let params = [id, id];
+
+    if (from_date) {
+      whereClause += ' AND (t.created_at >= ? OR do.created_at >= ?)';
+      params.push(from_date, from_date);
+    }
+    if (to_date) {
+      whereClause += ' AND (t.created_at <= ? OR do.created_at <= ?)';
+      params.push(to_date, to_date);
+    }
+
+    const dataQuery = `
+      SELECT 
+        'transaction' as record_type,
+        t.created_at,
+        t.tx_type as type,
+        t.amount_usd,
+        t.amount_lbp,
+        t.direction,
+        t.description,
+        o.order_ref as order_reference,
+        u.full_name as created_by_name,
+        t.id as record_id
+      FROM transactions t
+      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN orders o ON t.order_id = o.id
+      WHERE t.actor_type = 'driver' AND t.actor_id = ?
+      
+      UNION ALL
+      
+      SELECT 
+        'operation' as record_type,
+        do.created_at,
+        do.operation_type as type,
+        do.amount_usd,
+        do.amount_lbp,
+        'debit' as direction,
+        do.description,
+        o.order_ref as order_reference,
+        u.full_name as created_by_name,
+        do.id as record_id
+      FROM driver_operations do
+      LEFT JOIN users u ON do.created_by = u.id
+      LEFT JOIN orders o ON do.order_id = o.id
+      WHERE do.driver_id = ?
+      
+      ORDER BY created_at ASC
+    `;
+
+    const records = await query(dataQuery, [id, id]);
+
+    // Build CSV
+    const headers = [
+      'Date', 'Record Type', 'Type', 'Amount USD', 'Amount LBP', 'Direction', 'Description', 
+      'Order Reference', 'Created By', 'Record ID'
+    ];
+
+    const csvRows = records.map(record => [
+      new Date(record.created_at).toISOString().split('T')[0],
+      record.record_type,
+      record.type || '',
+      record.amount_usd || 0,
+      record.amount_lbp || 0,
+      record.direction || '',
+      (record.description || '').replace(/\n|\r/g, ' '),
+      record.order_reference || '',
+      record.created_by_name || '',
+      record.record_id
+    ]);
+
+    const csv = [headers.join(','), ...csvRows.map(row => row.join(','))].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=driver-${driver.full_name}-account.csv`);
+    res.send(csv);
+  } catch (error) {
+    console.error('Error exporting driver CSV:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to export driver CSV',
+      error: error.message 
+    });
+  }
+});
+
+// Get all third party orders with revenue split
+router.get('/thirdparty', authenticateToken, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search = '' } = req.query;
+    const offset = (page - 1) * limit;
+
+    let whereClause = '';
+    let params = [];
+
+    if (search) {
+      whereClause = 'WHERE o.third_party_name ILIKE ? OR o.customer_name ILIKE ?';
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const thirdPartyQuery = `
+      SELECT 
+        o.third_party_name,
+        COUNT(DISTINCT o.id) as total_orders,
+        COALESCE(SUM(o.total_usd), 0) as total_revenue_usd,
+        COALESCE(SUM(o.total_lbp), 0) as total_revenue_lbp,
+        COALESCE(SUM(o.third_party_fee_usd), 0) as total_third_party_fees_usd,
+        COALESCE(SUM(o.third_party_fee_lbp), 0) as total_third_party_fees_lbp,
+        COALESCE(SUM(o.total_usd - o.third_party_fee_usd), 0) as our_net_share_usd,
+        COALESCE(SUM(o.total_lbp - o.third_party_fee_lbp), 0) as our_net_share_lbp,
+        COALESCE(SUM(o.driver_fee_usd), 0) as total_driver_fees_usd,
+        COALESCE(SUM(o.driver_fee_lbp), 0) as total_driver_fees_lbp,
+        MAX(o.created_at) as last_order_date
+      FROM orders o
+      WHERE o.third_party_name IS NOT NULL AND o.third_party_name != ''
+      ${whereClause}
+      GROUP BY o.third_party_name
+      ORDER BY total_revenue_usd DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    params.push(limit, offset);
+    const thirdPartyData = await query(thirdPartyQuery, params);
+
+    res.json({
+      success: true,
+      data: thirdPartyData
+    });
+  } catch (error) {
+    console.error('Error fetching third party accounting:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch third party accounting',
+      error: error.message 
+    });
+  }
+});
+
+// Get third party details with orders and revenue split
+router.get('/thirdparty/:name', authenticateToken, async (req, res) => {
+  try {
+    const { name } = req.params;
+    const { from_date, to_date } = req.query;
+
+    // Get third party orders
+    let ordersWhereClause = 'WHERE o.third_party_name = ?';
+    let ordersParams = [name];
+
+    if (from_date) {
+      ordersWhereClause += ' AND o.created_at >= ?';
+      ordersParams.push(from_date);
+    }
+    if (to_date) {
+      ordersWhereClause += ' AND o.created_at <= ?';
+      ordersParams.push(to_date);
+    }
+
+    const ordersQuery = `
+      SELECT 
+        o.*,
+        d.full_name as driver_name,
+        d.phone as driver_phone,
+        c.business_name as client_name,
+        c.phone as client_phone,
+        (o.total_usd - o.third_party_fee_usd) as our_share_usd,
+        (o.total_lbp - o.third_party_fee_lbp) as our_share_lbp
+      FROM orders o
+      LEFT JOIN drivers d ON o.driver_id = d.id
+      LEFT JOIN clients c ON o.customer_name = c.business_name OR o.customer_name = c.id::text
+      ${ordersWhereClause}
+      ORDER BY o.created_at DESC
+    `;
+
+    const orders = await query(ordersQuery, ordersParams);
+
+    // Get third party transactions
+    const transactionsQuery = `
+      SELECT 
+        t.*,
+        u.full_name as created_by_name,
+        o.order_ref as order_reference
+      FROM transactions t
+      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN orders o ON t.order_id = o.id
+      WHERE t.actor_type = 'third_party' AND t.description ILIKE ?
+      ORDER BY t.created_at DESC
+    `;
+
+    const transactions = await query(transactionsQuery, [`%${name}%`]);
+
+    // Calculate revenue split summary
+    const summaryQuery = `
+      SELECT 
+        COUNT(*) as total_orders,
+        COALESCE(SUM(o.total_usd), 0) as total_revenue_usd,
+        COALESCE(SUM(o.total_lbp), 0) as total_revenue_lbp,
+        COALESCE(SUM(o.third_party_fee_usd), 0) as total_third_party_fees_usd,
+        COALESCE(SUM(o.third_party_fee_lbp), 0) as total_third_party_fees_lbp,
+        COALESCE(SUM(o.total_usd - o.third_party_fee_usd), 0) as our_net_share_usd,
+        COALESCE(SUM(o.total_lbp - o.third_party_fee_lbp), 0) as our_net_share_lbp,
+        COALESCE(SUM(o.driver_fee_usd), 0) as total_driver_fees_usd,
+        COALESCE(SUM(o.driver_fee_lbp), 0) as total_driver_fees_lbp
+      FROM orders o
+      WHERE o.third_party_name = ?
+    `;
+
+    const [summary] = await query(summaryQuery, [name]);
+
+    res.json({
+      success: true,
+      data: {
+        third_party_name: name,
+        orders,
+        transactions,
+        summary: {
+          total_orders: summary.total_orders || 0,
+          total_revenue_usd: parseFloat(summary.total_revenue_usd) || 0,
+          total_revenue_lbp: parseInt(summary.total_revenue_lbp) || 0,
+          total_third_party_fees_usd: parseFloat(summary.total_third_party_fees_usd) || 0,
+          total_third_party_fees_lbp: parseInt(summary.total_third_party_fees_lbp) || 0,
+          our_net_share_usd: parseFloat(summary.our_net_share_usd) || 0,
+          our_net_share_lbp: parseInt(summary.our_net_share_lbp) || 0,
+          total_driver_fees_usd: parseFloat(summary.total_driver_fees_usd) || 0,
+          total_driver_fees_lbp: parseInt(summary.total_driver_fees_lbp) || 0
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching third party details:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch third party details',
+      error: error.message 
+    });
+  }
+});
+
+// Cash out third party account
+router.post('/thirdparty/:name/cashout', authenticateToken, async (req, res) => {
+  try {
+    const { name } = req.params;
+    const { amount_usd = 0, amount_lbp = 0, description = 'Third party cashout' } = req.body;
+
+    // Get third party summary
+    const summaryQuery = `
+      SELECT 
+        COALESCE(SUM(o.third_party_fee_usd), 0) as total_third_party_fees_usd,
+        COALESCE(SUM(o.third_party_fee_lbp), 0) as total_third_party_fees_lbp,
+        COALESCE(SUM(o.total_usd - o.third_party_fee_usd), 0) as our_net_share_usd,
+        COALESCE(SUM(o.total_lbp - o.third_party_fee_lbp), 0) as our_net_share_lbp
+      FROM orders o
+      WHERE o.third_party_name = ?
+    `;
+
+    const [summary] = await query(summaryQuery, [name]);
+
+    const totalThirdPartyFeesUsd = parseFloat(summary.total_third_party_fees_usd) || 0;
+    const totalThirdPartyFeesLbp = parseInt(summary.total_third_party_fees_lbp) || 0;
+
+    // Validate cashout amounts
+    if (amount_usd > totalThirdPartyFeesUsd || amount_lbp > totalThirdPartyFeesLbp) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cashout amount exceeds available third party fees' 
+      });
+    }
+
+    // Create cashout transaction
+    const transactionQuery = `
+      INSERT INTO transactions (
+        tx_type, amount_usd, amount_lbp, actor_type, actor_id,
+        description, direction, category, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const transactionParams = [
+      'third_party_cashout',
+      amount_usd,
+      amount_lbp,
+      'third_party',
+      null,
+      `${description} - ${name}`,
+      'debit',
+      'cashout',
+      req.user.id
+    ];
+
+    const transactionResult = await run(transactionQuery, transactionParams);
+
+    // Create accounting snapshot
+    const snapshotQuery = `
+      INSERT INTO accounting_snapshots (
+        entity_type, entity_id, snapshot_type,
+        total_amount_usd, total_amount_lbp,
+        net_balance_usd, net_balance_lbp,
+        snapshot_data, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const snapshotData = {
+      third_party_name: name,
+      cashout_amount_usd: amount_usd,
+      cashout_amount_lbp: amount_lbp,
+      previous_third_party_fees_usd: totalThirdPartyFeesUsd,
+      previous_third_party_fees_lbp: totalThirdPartyFeesLbp,
+      remaining_third_party_fees_usd: totalThirdPartyFeesUsd - amount_usd,
+      remaining_third_party_fees_lbp: totalThirdPartyFeesLbp - amount_lbp
+    };
+
+    await run(snapshotQuery, [
+      'third_party',
+      null,
+      'cashout',
+      amount_usd,
+      amount_lbp,
+      totalThirdPartyFeesUsd - amount_usd,
+      totalThirdPartyFeesLbp - amount_lbp,
+      JSON.stringify(snapshotData),
+      req.user.id
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Third party cashout completed successfully',
+      data: {
+        transaction_id: transactionResult.id,
+        amount_usd,
+        amount_lbp,
+        remaining_third_party_fees_usd: totalThirdPartyFeesUsd - amount_usd,
+        remaining_third_party_fees_lbp: totalThirdPartyFeesLbp - amount_lbp
+      }
+    });
+  } catch (error) {
+    console.error('Error processing third party cashout:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to process third party cashout',
+      error: error.message 
+    });
+  }
+});
+
+// Export third party account as CSV
+router.get('/thirdparty/:name/export/csv', authenticateToken, async (req, res) => {
+  try {
+    const { name } = req.params;
+    const { from_date, to_date } = req.query;
+
+    // Get third party orders
+    let whereClause = 'WHERE o.third_party_name = ?';
+    let params = [name];
+
+    if (from_date) {
+      whereClause += ' AND o.created_at >= ?';
+      params.push(from_date);
+    }
+    if (to_date) {
+      whereClause += ' AND o.created_at <= ?';
+      params.push(to_date);
+    }
+
+    const ordersQuery = `
+      SELECT 
+        o.*,
+        d.full_name as driver_name,
+        c.business_name as client_name,
+        (o.total_usd - o.third_party_fee_usd) as our_share_usd,
+        (o.total_lbp - o.third_party_fee_lbp) as our_share_lbp
+      FROM orders o
+      LEFT JOIN drivers d ON o.driver_id = d.id
+      LEFT JOIN clients c ON o.customer_name = c.business_name OR o.customer_name = c.id::text
+      ${whereClause}
+      ORDER BY o.created_at ASC
+    `;
+
+    const orders = await query(ordersQuery, params);
+
+    // Build CSV
+    const headers = [
+      'Date', 'Order Ref', 'Customer', 'Driver', 'Total USD', 'Total LBP',
+      'Third Party Fee USD', 'Third Party Fee LBP', 'Our Share USD', 'Our Share LBP',
+      'Driver Fee USD', 'Driver Fee LBP', 'Status', 'Payment Status'
+    ];
+
+    const csvRows = orders.map(order => [
+      new Date(order.created_at).toISOString().split('T')[0],
+      order.order_ref || '',
+      order.client_name || order.customer_name || '',
+      order.driver_name || '',
+      order.total_usd || 0,
+      order.total_lbp || 0,
+      order.third_party_fee_usd || 0,
+      order.third_party_fee_lbp || 0,
+      order.our_share_usd || 0,
+      order.our_share_lbp || 0,
+      order.driver_fee_usd || 0,
+      order.driver_fee_lbp || 0,
+      order.status || '',
+      order.payment_status || ''
+    ]);
+
+    const csv = [headers.join(','), ...csvRows.map(row => row.join(','))].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=third-party-${name}-orders.csv`);
+    res.send(csv);
+  } catch (error) {
+    console.error('Error exporting third party CSV:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to export third party CSV',
+      error: error.message 
     });
   }
 });

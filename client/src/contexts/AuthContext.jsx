@@ -25,7 +25,9 @@ export function AuthProvider({ children }) {
         headers.Authorization = `Bearer ${tkn}`;
       }
       
-      const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+      const apiBase = 'https://soufiam-erp-backend.onrender.com';
+      console.log('🌐 fetchMe: Using API base:', apiBase);
+      
       const res = await fetch(`${apiBase}/api/auth/me`, {
         headers,
         credentials: 'include', // Include cookies
@@ -35,6 +37,14 @@ export function AuthProvider({ children }) {
       
       if (!res.ok) {
         console.log('❌ fetchMe: Response not ok');
+        if (res.status === 401) {
+          console.log('🔒 fetchMe: Unauthorized - clearing auth state');
+          // Clear invalid authentication state
+          safeLocalRemove("token");
+          setToken(null);
+          setUser(null);
+          setIsAuthenticated(false);
+        }
         return null;
       }
       
@@ -113,7 +123,9 @@ export function AuthProvider({ children }) {
     console.log('🔐 AuthContext: Starting login process...');
     setLoading(true);
     try {
-      const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+      const apiBase = 'https://soufiam-erp-backend.onrender.com';
+      console.log('🌐 AuthContext: Using API base:', apiBase);
+      
       const res = await fetch(`${apiBase}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -191,7 +203,7 @@ export function AuthProvider({ children }) {
   const signup = async (payload) => {
     setLoading(true);
     try {
-      const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+      const apiBase = 'https://soufiam-erp-backend.onrender.com';
       const res = await fetch(`${apiBase}/api/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -238,7 +250,7 @@ export function AuthProvider({ children }) {
     
     try {
       // Call logout endpoint to clear server-side cookies
-      const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+      const apiBase = 'https://soufiam-erp-backend.onrender.com';
       await fetch(`${apiBase}/api/auth/logout`, {
         method: "POST",
         credentials: 'include',
