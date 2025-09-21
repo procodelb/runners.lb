@@ -53,7 +53,7 @@ const Accounting = () => {
         return res.data?.data || [];
       }
       if (selectedView === 'third_parties') {
-        const res = await api.get('/accounting/thirdparty', { params: { from_date: dateRange.from, to_date: dateRange.to, search: searchTerm } });
+        const res = await api.get('/accounting/thirdparties', { params: { from_date: dateRange.from, to_date: dateRange.to, search: searchTerm } });
         return res.data?.data || [];
       }
       // Fallback to overview endpoint already available
@@ -77,7 +77,7 @@ const Accounting = () => {
         return res.data?.data;
       }
       if (selectedView === 'third_parties') {
-        const res = await api.get(`/accounting/thirdparty/${selectedEntity.name}`, { params: { from_date: dateRange.from, to_date: dateRange.to } });
+        const res = await api.get(`/accounting/thirdparties/${selectedEntity.name}`, { params: { from_date: dateRange.from, to_date: dateRange.to } });
         return res.data?.data;
       }
       return null;
@@ -121,8 +121,17 @@ const Accounting = () => {
 
   const downloadStatement = async (actorType, actorId, format = 'csv') => {
     try {
-      const response = await api.get('/accounting/statement', {
-        params: { actorType, actorId, from_date: dateRange.from, to_date: dateRange.to, format },
+      let endpoint = '';
+      if (actorType === 'client') {
+        endpoint = `/accounting/clients/${actorId}/export/${format}`;
+      } else if (actorType === 'driver') {
+        endpoint = `/accounting/drivers/${actorId}/export/${format}`;
+      } else if (actorType === 'third_party') {
+        endpoint = `/accounting/thirdparties/${actorId}/export/${format}`;
+      }
+      
+      const response = await api.get(endpoint, {
+        params: { from_date: dateRange.from, to_date: dateRange.to },
         responseType: 'blob'
       });
       const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -161,7 +170,7 @@ const Accounting = () => {
       } else if (scope === 'drivers') {
         return api.post(`/accounting/drivers/${idOrName}/cashout`, { amount_usd, amount_lbp, description });
       } else if (scope === 'third_parties') {
-        return api.post(`/accounting/thirdparty/${idOrName}/cashout`, { amount_usd, amount_lbp, description });
+        return api.post(`/accounting/thirdparties/${idOrName}/cashout`, { amount_usd, amount_lbp, description });
       }
     },
     {
@@ -260,7 +269,7 @@ const Accounting = () => {
   const totalAmounts = getTotalAmounts(selectedView === 'overview' ? [] : viewData);
 
   // Safety check - if no data is available, show a message
-  if (!accountingData && !isLoading) {
+  if (!viewData && !isLoading) {
     return (
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -826,13 +835,13 @@ const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, entity
                 Export Image
               </button>
               <button
-                onClick={() => onDownloadStatement(viewType.slice(0,-1), selectedEntity.id, 'csv')}
+                onClick={() => onDownloadStatement(viewType.slice(0,-1), selectedEntity.id || selectedEntity.name, 'csv')}
                 className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
               >
                 Download CSV
               </button>
               <button
-                onClick={() => onDownloadStatement(viewType.slice(0,-1), selectedEntity.id, 'pdf')}
+                onClick={() => onDownloadStatement(viewType.slice(0,-1), selectedEntity.id || selectedEntity.name, 'pdf')}
                 className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
               >
                 Download PDF

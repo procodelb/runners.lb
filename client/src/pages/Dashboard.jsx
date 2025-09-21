@@ -28,7 +28,13 @@ const Dashboard = () => {
     totalClients: 0,
     activeDrivers: 0,
     totalRevenue: { usd: 0, lbp: 0 },
-    pendingPayments: { usd: 0, lbp: 0 }
+    pendingPayments: { usd: 0, lbp: 0 },
+    totalIncomes: { usd: 0, lbp: 0 },
+    totalExpenses: { usd: 0, lbp: 0 },
+    netProfit: { usd: 0, lbp: 0 },
+    ordersCompletedToday: 0,
+    ordersCompletedThisMonth: 0,
+    cashboxBalance: { usd: 0, lbp: 0 }
   });
 
   // Safety function to ensure stats object is always valid
@@ -46,6 +52,24 @@ const Dashboard = () => {
       pendingPayments: {
         usd: stats?.pendingPayments?.usd || 0,
         lbp: stats?.pendingPayments?.lbp || 0
+      },
+      totalIncomes: {
+        usd: stats?.totalIncomes?.usd || 0,
+        lbp: stats?.totalIncomes?.lbp || 0
+      },
+      totalExpenses: {
+        usd: stats?.totalExpenses?.usd || 0,
+        lbp: stats?.totalExpenses?.lbp || 0
+      },
+      netProfit: {
+        usd: stats?.netProfit?.usd || 0,
+        lbp: stats?.netProfit?.lbp || 0
+      },
+      ordersCompletedToday: stats?.ordersCompletedToday || 0,
+      ordersCompletedThisMonth: stats?.ordersCompletedThisMonth || 0,
+      cashboxBalance: {
+        usd: stats?.cashboxBalance?.usd || 0,
+        lbp: stats?.cashboxBalance?.lbp || 0
       }
     };
   };
@@ -93,6 +117,20 @@ const Dashboard = () => {
     }
   );
 
+  const { data: processTimeline, isLoading: timelineLoading } = useQuery(
+    'process-timeline',
+    () => api.get('/dashboard/process-timeline'),
+    {
+      enabled: isAuthenticated && !!user,
+      refetchInterval: 30000,
+      retry: 2,
+      select: (response) => response.data?.data || [],
+      onError: (error) => {
+        console.error('Process timeline error:', error);
+      }
+    }
+  );
+
   useEffect(() => {
     console.log('📊 Dashboard: dashboardData received:', dashboardData);
     if (dashboardData?.data) {
@@ -111,6 +149,24 @@ const Dashboard = () => {
         pendingPayments: {
           usd: dashboardData.data.pendingPayments?.usd || 0,
           lbp: dashboardData.data.pendingPayments?.lbp || 0
+        },
+        totalIncomes: {
+          usd: dashboardData.data.totalIncomes?.usd || 0,
+          lbp: dashboardData.data.totalIncomes?.lbp || 0
+        },
+        totalExpenses: {
+          usd: dashboardData.data.totalExpenses?.usd || 0,
+          lbp: dashboardData.data.totalExpenses?.lbp || 0
+        },
+        netProfit: {
+          usd: dashboardData.data.netProfit?.usd || 0,
+          lbp: dashboardData.data.netProfit?.lbp || 0
+        },
+        ordersCompletedToday: dashboardData.data.ordersCompletedToday || 0,
+        ordersCompletedThisMonth: dashboardData.data.ordersCompletedThisMonth || 0,
+        cashboxBalance: {
+          usd: dashboardData.data.cashboxBalance?.usd || 0,
+          lbp: dashboardData.data.cashboxBalance?.lbp || 0
         }
       };
       setStats(safeData);
@@ -130,6 +186,24 @@ const Dashboard = () => {
         pendingPayments: {
           usd: dashboardData.data.data.pendingPayments?.usd || 0,
           lbp: dashboardData.data.data.pendingPayments?.lbp || 0
+        },
+        totalIncomes: {
+          usd: dashboardData.data.data.totalIncomes?.usd || 0,
+          lbp: dashboardData.data.data.totalIncomes?.lbp || 0
+        },
+        totalExpenses: {
+          usd: dashboardData.data.data.totalExpenses?.usd || 0,
+          lbp: dashboardData.data.data.totalExpenses?.lbp || 0
+        },
+        netProfit: {
+          usd: dashboardData.data.data.netProfit?.usd || 0,
+          lbp: dashboardData.data.data.netProfit?.lbp || 0
+        },
+        ordersCompletedToday: dashboardData.data.data.ordersCompletedToday || 0,
+        ordersCompletedThisMonth: dashboardData.data.data.ordersCompletedThisMonth || 0,
+        cashboxBalance: {
+          usd: dashboardData.data.data.cashboxBalance?.usd || 0,
+          lbp: dashboardData.data.data.cashboxBalance?.lbp || 0
         }
       };
       setStats(safeData);
@@ -320,8 +394,40 @@ const Dashboard = () => {
                   />
                 </div>
 
-                {/* Revenue Stats */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                {/* Additional Metrics */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                  <StatCard
+                    title="Orders Today"
+                    value={getSafeStats().ordersCompletedToday}
+                    icon={CheckCircle}
+                    color="bg-gradient-to-r from-emerald-500 to-emerald-600"
+                    subtitle="Completed today"
+                  />
+                  <StatCard
+                    title="Orders This Month"
+                    value={getSafeStats().ordersCompletedThisMonth}
+                    icon={Calendar}
+                    color="bg-gradient-to-r from-indigo-500 to-indigo-600"
+                    subtitle="Completed this month"
+                  />
+                  <StatCard
+                    title="Net Profit USD"
+                    value={`$${getSafeStats().netProfit.usd.toLocaleString()}`}
+                    icon={TrendingUp}
+                    color="bg-gradient-to-r from-green-500 to-green-600"
+                    subtitle="Total profit"
+                  />
+                  <StatCard
+                    title="Cashbox Balance"
+                    value={`$${getSafeStats().cashboxBalance.usd.toLocaleString()}`}
+                    icon={DollarSign}
+                    color="bg-gradient-to-r from-amber-500 to-amber-600"
+                    subtitle="Current balance"
+                  />
+                </div>
+
+                {/* Financial Overview */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -329,20 +435,20 @@ const Dashboard = () => {
                     className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 p-6"
                   >
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Total Revenue</h3>
-                      <DollarSign className="w-6 h-6 text-green-500" />
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Total Incomes</h3>
+                      <TrendingUp className="w-6 h-6 text-green-500" />
                     </div>
                     <div className="space-y-3">
                       <div className="flex justify-between items-center">
                         <span className="text-gray-600 dark:text-gray-400">USD</span>
                         <span className="text-xl font-bold text-green-600">
-                          ${getSafeStats().totalRevenue.usd.toLocaleString()}
+                          ${getSafeStats().totalIncomes.usd.toLocaleString()}
                         </span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-gray-600 dark:text-gray-400">LBP</span>
-                        <span className="text-xl font-bold text-blue-600">
-                          {getSafeStats().totalRevenue.lbp.toLocaleString()} LBP
+                        <span className="text-xl font-bold text-green-600">
+                          {getSafeStats().totalIncomes.lbp.toLocaleString()} LBP
                         </span>
                       </div>
                     </div>
@@ -355,20 +461,46 @@ const Dashboard = () => {
                     className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 p-6"
                   >
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Pending Payments</h3>
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Total Expenses</h3>
+                      <AlertCircle className="w-6 h-6 text-red-500" />
                     </div>
                     <div className="space-y-3">
                       <div className="flex justify-between items-center">
                         <span className="text-gray-600 dark:text-gray-400">USD</span>
-                        <span className="text-xl font-bold text-yellow-600">
-                          ${getSafeStats().pendingPayments.usd.toLocaleString()}
+                        <span className="text-xl font-bold text-red-600">
+                          ${getSafeStats().totalExpenses.usd.toLocaleString()}
                         </span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-gray-600 dark:text-gray-400">LBP</span>
-                        <span className="text-xl font-bold text-yellow-600">
-                          {getSafeStats().pendingPayments.lbp.toLocaleString()} LBP
+                        <span className="text-xl font-bold text-red-600">
+                          {getSafeStats().totalExpenses.lbp.toLocaleString()} LBP
+                        </span>
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5, delay: 0.4 }}
+                    className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 p-6"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Cashbox Balance</h3>
+                      <DollarSign className="w-6 h-6 text-amber-500" />
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600 dark:text-gray-400">USD</span>
+                        <span className="text-xl font-bold text-amber-600">
+                          ${getSafeStats().cashboxBalance.usd.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600 dark:text-gray-400">LBP</span>
+                        <span className="text-xl font-bold text-amber-600">
+                          {getSafeStats().cashboxBalance.lbp.toLocaleString()} LBP
                         </span>
                       </div>
                     </div>
@@ -416,7 +548,7 @@ const Dashboard = () => {
                 </motion.div>
 
                 {/* Recent Activity */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                   {/* Recent Orders */}
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
@@ -492,6 +624,56 @@ const Dashboard = () => {
                     )}
                   </motion.div>
                 </div>
+
+                {/* Process Timeline */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.7 }}
+                  className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 p-6"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Process Timeline</h3>
+                    <Clock className="w-5 h-5 text-gray-400" />
+                  </div>
+                  {timelineLoading ? (
+                    <LoadingSpinner isLoading={true} message="Loading timeline..." size="small" />
+                  ) : processTimeline?.length > 0 ? (
+                    <div className="space-y-4">
+                      {processTimeline.slice(0, 10).map((item, index) => (
+                        <div key={index} className="flex items-start space-x-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                          <div className={`w-2 h-2 rounded-full mt-2 ${
+                            item.type === 'order' ? 'bg-blue-500' :
+                            item.type === 'transaction' ? 'bg-green-500' :
+                            'bg-purple-500'
+                          }`} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">
+                              {item.description}
+                            </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {new Date(item.timestamp).toLocaleString()}
+                            </p>
+                            {item.details && (
+                              <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                                {item.details}
+                              </p>
+                            )}
+                          </div>
+                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                            item.type === 'order' ? 'bg-blue-100 text-blue-800' :
+                            item.type === 'transaction' ? 'bg-green-100 text-green-800' :
+                            'bg-purple-100 text-purple-800'
+                          }`}>
+                            {item.type}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 dark:text-gray-400 text-center py-4">No recent activity</p>
+                  )}
+                </motion.div>
               </>
             );
           } catch (e) {

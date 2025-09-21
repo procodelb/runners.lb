@@ -205,12 +205,12 @@ router.get('/overview', authenticateToken, async (req, res) => {
     // Get transaction summary
     const transactionsQuery = `
       SELECT 
-        COALESCE(tx_type, type) as type,
+        tx_type as type,
         COUNT(*) as count,
         COALESCE(SUM(amount_usd), 0) as total_usd,
         COALESCE(SUM(amount_lbp), 0) as total_lbp
       FROM transactions
-      GROUP BY COALESCE(tx_type, type)
+      GROUP BY tx_type
     `;
     const transactionsResult = await query(transactionsQuery);
 
@@ -259,20 +259,20 @@ router.get('/reports', authenticateToken, async (req, res) => {
     }
 
     if (type) {
-      whereClause += ' AND type = ?';
+      whereClause += ' AND tx_type = ?';
       params.push(type);
     }
 
     const reportsQuery = `
       SELECT 
         DATE(created_at) as date,
-        COALESCE(tx_type, type) as type,
+        tx_type as type,
         COUNT(*) as count,
         COALESCE(SUM(amount_usd), 0) as total_usd,
         COALESCE(SUM(amount_lbp), 0) as total_lbp
       FROM transactions
       ${whereClause}
-      GROUP BY DATE(created_at), COALESCE(tx_type, type)
+      GROUP BY DATE(created_at), tx_type
       ORDER BY date DESC
     `;
 
@@ -303,8 +303,8 @@ router.get('/clients', authenticateToken, async (req, res) => {
     let params = [];
 
     if (search) {
-      whereClause = 'WHERE c.business_name ILIKE ? OR c.contact_person ILIKE ?';
-      params.push(`%${search}%`, `%${search}%`);
+      whereClause = 'WHERE LOWER(c.business_name) LIKE LOWER($1) OR LOWER(c.contact_person) LIKE LOWER($1)';
+      params.push(`%${search}%`);
     }
 
     const clientsQuery = `
@@ -317,13 +317,24 @@ router.get('/clients', authenticateToken, async (req, res) => {
         COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_lbp ELSE 0 END), 0) as paid_amount_lbp,
         COALESCE(SUM(CASE WHEN o.payment_status = 'unpaid' THEN o.total_usd ELSE 0 END), 0) as pending_amount_usd,
         COALESCE(SUM(CASE WHEN o.payment_status = 'unpaid' THEN o.total_lbp ELSE 0 END), 0) as pending_amount_lbp,
-        MAX(o.created_at) as last_order_date
+        MAX(o.created_at) as last_order_date,
+        -- Calculate balances from transactions
+        COALESCE(c.old_balance_usd, 0) as old_balance_usd,
+        COALESCE(c.old_balance_lbp, 0) as old_balance_lbp,
+        COALESCE(SUM(o.total_usd), 0) as orders_total_usd,
+        COALESCE(SUM(o.total_lbp), 0) as orders_total_lbp,
+        COALESCE(SUM(o.delivery_fee_usd), 0) as fees_total_usd,
+        COALESCE(SUM(o.delivery_fee_lbp), 0) as fees_total_lbp,
+        COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_usd ELSE 0 END), 0) as payments_total_usd,
+        COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_lbp ELSE 0 END), 0) as payments_total_lbp,
+        (COALESCE(c.old_balance_usd, 0) + COALESCE(SUM(o.total_usd), 0) - COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_usd ELSE 0 END), 0)) as new_balance_usd,
+        (COALESCE(c.old_balance_lbp, 0) + COALESCE(SUM(o.total_lbp), 0) - COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_lbp ELSE 0 END), 0)) as new_balance_lbp
       FROM clients c
       LEFT JOIN orders o ON c.business_name = o.customer_name OR c.id::text = o.customer_name
       ${whereClause}
-      GROUP BY c.id, c.business_name, c.contact_person, c.phone, c.address, c.instagram, c.website, c.google_location, c.category, c.created_at, c.updated_at
+      GROUP BY c.id, c.business_name, c.contact_person, c.phone, c.address, c.instagram, c.website, c.google_location, c.category, c.created_at, c.updated_at, c.old_balance_usd, c.old_balance_lbp
       ORDER BY total_revenue_usd DESC
-      LIMIT ? OFFSET ?
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
     params.push(limit, offset);
@@ -350,23 +361,25 @@ router.get('/clients/:id', authenticateToken, async (req, res) => {
     const { from_date, to_date } = req.query;
 
     // Get client info
-    const clientQuery = 'SELECT * FROM clients WHERE id = ?';
-    const [client] = await query(clientQuery, [id]);
+    const clientQuery = 'SELECT * FROM clients WHERE id = $1';
+    const clientResult = await query(clientQuery, [id]);
 
-    if (!client) {
+    if (clientResult.length === 0) {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
 
+    const client = clientResult[0];
+
     // Get client orders
-    let ordersWhereClause = 'WHERE o.customer_name = ? OR o.customer_name = ?';
+    let ordersWhereClause = 'WHERE o.customer_name = $1 OR o.customer_name = $2';
     let ordersParams = [client.business_name, id.toString()];
 
     if (from_date) {
-      ordersWhereClause += ' AND o.created_at >= ?';
+      ordersWhereClause += ` AND o.created_at >= $${ordersParams.length + 1}`;
       ordersParams.push(from_date);
     }
     if (to_date) {
-      ordersWhereClause += ' AND o.created_at <= ?';
+      ordersWhereClause += ` AND o.created_at <= $${ordersParams.length + 1}`;
       ordersParams.push(to_date);
     }
 
@@ -392,21 +405,33 @@ router.get('/clients/:id', authenticateToken, async (req, res) => {
       FROM transactions t
       LEFT JOIN users u ON t.created_by = u.id
       LEFT JOIN orders o ON t.order_id = o.id
-      WHERE t.actor_type = 'client' AND t.actor_id = ?
+      WHERE t.actor_type = 'client' AND t.actor_id = $1
       ORDER BY t.created_at DESC
     `;
 
     const transactions = await query(transactionsQuery, [id]);
 
-    // Calculate balances
+    // Calculate comprehensive balance
     const balanceQuery = `
       SELECT 
-        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_usd ELSE -amount_usd END), 0) AS balance_usd,
-        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_lbp ELSE -amount_lbp END), 0) AS balance_lbp
-      FROM transactions
-      WHERE actor_type = 'client' AND actor_id = ?
+        COALESCE(c.old_balance_usd, 0) as old_balance_usd,
+        COALESCE(c.old_balance_lbp, 0) as old_balance_lbp,
+        COALESCE(SUM(o.total_usd), 0) as orders_total_usd,
+        COALESCE(SUM(o.total_lbp), 0) as orders_total_lbp,
+        COALESCE(SUM(o.delivery_fee_usd), 0) as fees_total_usd,
+        COALESCE(SUM(o.delivery_fee_lbp), 0) as fees_total_lbp,
+        COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_usd ELSE 0 END), 0) as payments_total_usd,
+        COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_lbp ELSE 0 END), 0) as payments_total_lbp,
+        (COALESCE(c.old_balance_usd, 0) + COALESCE(SUM(o.total_usd), 0) - COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_usd ELSE 0 END), 0)) as new_balance_usd,
+        (COALESCE(c.old_balance_lbp, 0) + COALESCE(SUM(o.total_lbp), 0) - COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_lbp ELSE 0 END), 0)) as new_balance_lbp
+      FROM clients c
+      LEFT JOIN orders o ON c.business_name = o.customer_name OR c.id::text = o.customer_name
+      WHERE c.id = $1
+      GROUP BY c.id, c.old_balance_usd, c.old_balance_lbp
     `;
-    const [balance] = await query(balanceQuery, [id]);
+    
+    const balanceResult = await query(balanceQuery, [id]);
+    const balance = balanceResult[0] || {};
 
     res.json({
       success: true,
@@ -415,8 +440,16 @@ router.get('/clients/:id', authenticateToken, async (req, res) => {
         orders,
         transactions,
         balance: {
-          usd: parseFloat(balance.balance_usd) || 0,
-          lbp: parseInt(balance.balance_lbp) || 0
+          old_balance_usd: parseFloat(balance.old_balance_usd) || 0,
+          old_balance_lbp: parseInt(balance.old_balance_lbp) || 0,
+          orders_total_usd: parseFloat(balance.orders_total_usd) || 0,
+          orders_total_lbp: parseInt(balance.orders_total_lbp) || 0,
+          fees_total_usd: parseFloat(balance.fees_total_usd) || 0,
+          fees_total_lbp: parseInt(balance.fees_total_lbp) || 0,
+          payments_total_usd: parseFloat(balance.payments_total_usd) || 0,
+          payments_total_lbp: parseInt(balance.payments_total_lbp) || 0,
+          new_balance_usd: parseFloat(balance.new_balance_usd) || 0,
+          new_balance_lbp: parseInt(balance.new_balance_lbp) || 0
         }
       }
     });
@@ -563,21 +596,23 @@ router.get('/clients/:id/export/csv', authenticateToken, async (req, res) => {
     const { from_date, to_date } = req.query;
 
     // Get client info
-    const [client] = await query('SELECT * FROM clients WHERE id = ?', [id]);
-    if (!client) {
+    const clientResult = await query('SELECT * FROM clients WHERE id = $1', [id]);
+    if (clientResult.length === 0) {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
 
+    const client = clientResult[0];
+
     // Get client transactions
-    let whereClause = 'WHERE t.actor_type = \'client\' AND t.actor_id = ?';
+    let whereClause = 'WHERE t.actor_type = \'client\' AND t.actor_id = $1';
     let params = [id];
 
     if (from_date) {
-      whereClause += ' AND t.created_at >= ?';
+      whereClause += ` AND t.created_at >= $${params.length + 1}`;
       params.push(from_date);
     }
     if (to_date) {
-      whereClause += ' AND t.created_at <= ?';
+      whereClause += ` AND t.created_at <= $${params.length + 1}`;
       params.push(to_date);
     }
 
@@ -628,6 +663,113 @@ router.get('/clients/:id/export/csv', authenticateToken, async (req, res) => {
   }
 });
 
+// Export client account as PDF
+router.get('/clients/:id/export/pdf', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { from_date, to_date } = req.query;
+
+    // Get client info and statement data
+    const clientResult = await query('SELECT * FROM clients WHERE id = $1', [id]);
+    if (clientResult.length === 0) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    const client = clientResult[0];
+
+    // Get comprehensive statement data
+    const statementQuery = `
+      SELECT 
+        o.*,
+        d.full_name as driver_name,
+        t.*,
+        u.full_name as created_by_name
+      FROM orders o
+      LEFT JOIN drivers d ON o.driver_id = d.id
+      LEFT JOIN transactions t ON t.order_id = o.id
+      LEFT JOIN users u ON t.created_by = u.id
+      WHERE o.customer_name = $1 OR o.customer_name = $2
+      ${from_date ? `AND o.created_at >= $${from_date ? '3' : ''}` : ''}
+      ${to_date ? `AND o.created_at <= $${to_date ? '4' : ''}` : ''}
+      ORDER BY o.created_at DESC
+    `;
+
+    const params = [client.business_name, id.toString()];
+    if (from_date) params.push(from_date);
+    if (to_date) params.push(to_date);
+
+    const statementData = await query(statementQuery, params);
+
+    // For now, return a simple text-based PDF-like response
+    // In production, you would use a proper PDF library like puppeteer or pdfkit
+    const pdfContent = `
+CLIENT STATEMENT
+================
+
+Client: ${client.business_name}
+Contact: ${client.contact_person}
+Phone: ${client.phone}
+Address: ${client.address}
+
+Statement Period: ${from_date || 'All time'} to ${to_date || 'Present'}
+
+ORDERS:
+${statementData.map(order => `
+Order #${order.order_ref}
+Date: ${new Date(order.created_at).toLocaleDateString()}
+Amount: $${order.total_usd} / ${order.total_lbp} LBP
+Status: ${order.status}
+Payment: ${order.payment_status}
+`).join('\n')}
+
+Generated on: ${new Date().toLocaleString()}
+    `;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=client-${client.business_name}-statement.pdf`);
+    res.send(Buffer.from(pdfContent, 'utf8'));
+
+  } catch (error) {
+    console.error('Error exporting client PDF:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to export client PDF',
+      error: error.message 
+    });
+  }
+});
+
+// Export client account as image
+router.get('/clients/:id/export/image', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get client info
+    const clientResult = await query('SELECT * FROM clients WHERE id = $1', [id]);
+    if (clientResult.length === 0) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    const client = clientResult[0];
+
+    // For now, return a simple text response
+    // In production, you would generate an actual image using canvas or similar
+    const imageContent = `Client Statement for ${client.business_name}\nGenerated on ${new Date().toLocaleString()}`;
+
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', `attachment; filename=client-${client.business_name}-statement.png`);
+    res.send(Buffer.from(imageContent, 'utf8'));
+
+  } catch (error) {
+    console.error('Error exporting client image:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to export client image',
+      error: error.message 
+    });
+  }
+});
+
 // Get all drivers with accounting details
 router.get('/drivers', authenticateToken, async (req, res) => {
   try {
@@ -638,28 +780,35 @@ router.get('/drivers', authenticateToken, async (req, res) => {
     let params = [];
 
     if (search) {
-      whereClause = 'WHERE d.full_name ILIKE ? OR d.phone ILIKE ?';
-      params.push(`%${search}%`, `%${search}%`);
+      whereClause = 'WHERE LOWER(d.full_name) LIKE LOWER($1) OR LOWER(d.phone) LIKE LOWER($1)';
+      params.push(`%${search}%`);
     }
 
     const driversQuery = `
       SELECT 
         d.*,
         COUNT(DISTINCT o.id) as total_deliveries,
-        COUNT(DISTINCT do.id) as total_operations,
+        COUNT(DISTINCT driver_ops.id) as total_operations,
         COALESCE(SUM(o.driver_fee_usd), 0) as total_delivery_fees_usd,
         COALESCE(SUM(o.driver_fee_lbp), 0) as total_delivery_fees_lbp,
-        COALESCE(SUM(do.amount_usd), 0) as total_operation_amount_usd,
-        COALESCE(SUM(do.amount_lbp), 0) as total_operation_amount_lbp,
-        COALESCE(SUM(CASE WHEN do.operation_type = 'fuel_expense' THEN do.amount_lbp ELSE 0 END), 0) as total_fuel_expenses_lbp,
-        MAX(o.created_at) as last_delivery_date
+        COALESCE(SUM(driver_ops.amount_usd), 0) as total_operation_amount_usd,
+        COALESCE(SUM(driver_ops.amount_lbp), 0) as total_operation_amount_lbp,
+        COALESCE(SUM(CASE WHEN driver_ops.operation_type = 'fuel_expense' THEN driver_ops.amount_lbp ELSE 0 END), 0) as total_fuel_expenses_lbp,
+        MAX(o.created_at) as last_delivery_date,
+        -- Calculate comprehensive balances
+        COALESCE(SUM(o.driver_fee_usd), 0) as earnings_usd,
+        COALESCE(SUM(o.driver_fee_lbp), 0) as earnings_lbp,
+        COALESCE(SUM(driver_ops.amount_usd), 0) as expenses_usd,
+        COALESCE(SUM(driver_ops.amount_lbp), 0) as expenses_lbp,
+        (COALESCE(SUM(o.driver_fee_usd), 0) - COALESCE(SUM(driver_ops.amount_usd), 0)) as net_due_usd,
+        (COALESCE(SUM(o.driver_fee_lbp), 0) - COALESCE(SUM(driver_ops.amount_lbp), 0)) as net_due_lbp
       FROM drivers d
       LEFT JOIN orders o ON d.id = o.driver_id
-      LEFT JOIN driver_operations do ON d.id = do.driver_id
+      LEFT JOIN driver_operations driver_ops ON d.id = driver_ops.driver_id
       ${whereClause}
       GROUP BY d.id, d.full_name, d.phone, d.address, d.notes, d.active, d.default_fee_lbp, d.default_fee_usd, d.created_at, d.updated_at
       ORDER BY total_delivery_fees_usd DESC
-      LIMIT ? OFFSET ?
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
     params.push(limit, offset);
@@ -720,28 +869,28 @@ router.get('/drivers/:id', authenticateToken, async (req, res) => {
     const orders = await query(ordersQuery, ordersParams);
 
     // Get driver operations
-    let operationsWhereClause = 'WHERE do.driver_id = ?';
+    let operationsWhereClause = 'WHERE driver_ops.driver_id = ?';
     let operationsParams = [id];
 
     if (from_date) {
-      operationsWhereClause += ' AND do.created_at >= ?';
+      operationsWhereClause += ' AND driver_ops.created_at >= ?';
       operationsParams.push(from_date);
     }
     if (to_date) {
-      operationsWhereClause += ' AND do.created_at <= ?';
+      operationsWhereClause += ' AND driver_ops.created_at <= ?';
       operationsParams.push(to_date);
     }
 
     const operationsQuery = `
       SELECT 
-        do.*,
+        driver_ops.*,
         u.full_name as created_by_name,
         o.order_ref as order_reference
-      FROM driver_operations do
-      LEFT JOIN users u ON do.created_by = u.id
-      LEFT JOIN orders o ON do.order_id = o.id
+      FROM driver_operations driver_ops
+      LEFT JOIN users u ON driver_ops.created_by = u.id
+      LEFT JOIN orders o ON driver_ops.order_id = o.id
       ${operationsWhereClause}
-      ORDER BY do.created_at DESC
+      ORDER BY driver_ops.created_at DESC
     `;
 
     const operations = await query(operationsQuery, operationsParams);
@@ -933,15 +1082,15 @@ router.get('/drivers/:id/export/csv', authenticateToken, async (req, res) => {
     }
 
     // Get driver transactions and operations
-    let whereClause = 'WHERE (t.actor_type = \'driver\' AND t.actor_id = ?) OR (do.driver_id = ?)';
+    let whereClause = 'WHERE (t.actor_type = \'driver\' AND t.actor_id = ?) OR (driver_ops.driver_id = ?)';
     let params = [id, id];
 
     if (from_date) {
-      whereClause += ' AND (t.created_at >= ? OR do.created_at >= ?)';
+      whereClause += ' AND (t.created_at >= ? OR driver_ops.created_at >= ?)';
       params.push(from_date, from_date);
     }
     if (to_date) {
-      whereClause += ' AND (t.created_at <= ? OR do.created_at <= ?)';
+      whereClause += ' AND (t.created_at <= ? OR driver_ops.created_at <= ?)';
       params.push(to_date, to_date);
     }
 
@@ -966,19 +1115,19 @@ router.get('/drivers/:id/export/csv', authenticateToken, async (req, res) => {
       
       SELECT 
         'operation' as record_type,
-        do.created_at,
-        do.operation_type as type,
-        do.amount_usd,
-        do.amount_lbp,
+        driver_ops.created_at,
+        driver_ops.operation_type as type,
+        driver_ops.amount_usd,
+        driver_ops.amount_lbp,
         'debit' as direction,
-        do.description,
+        driver_ops.description,
         o.order_ref as order_reference,
         u.full_name as created_by_name,
-        do.id as record_id
-      FROM driver_operations do
-      LEFT JOIN users u ON do.created_by = u.id
-      LEFT JOIN orders o ON do.order_id = o.id
-      WHERE do.driver_id = ?
+        driver_ops.id as record_id
+      FROM driver_operations driver_ops
+      LEFT JOIN users u ON driver_ops.created_by = u.id
+      LEFT JOIN orders o ON driver_ops.order_id = o.id
+      WHERE driver_ops.driver_id = ?
       
       ORDER BY created_at ASC
     `;
@@ -1020,7 +1169,7 @@ router.get('/drivers/:id/export/csv', authenticateToken, async (req, res) => {
 });
 
 // Get all third party orders with revenue split
-router.get('/thirdparty', authenticateToken, async (req, res) => {
+router.get('/thirdparties', authenticateToken, async (req, res) => {
   try {
     const { page = 1, limit = 20, search = '' } = req.query;
     const offset = (page - 1) * limit;
@@ -1029,13 +1178,13 @@ router.get('/thirdparty', authenticateToken, async (req, res) => {
     let params = [];
 
     if (search) {
-      whereClause = 'WHERE o.third_party_name ILIKE ? OR o.customer_name ILIKE ?';
-      params.push(`%${search}%`, `%${search}%`);
+      whereClause = 'WHERE LOWER(o.third_party_name) LIKE LOWER($1) OR LOWER(o.customer_name) LIKE LOWER($1)';
+      params.push(`%${search}%`);
     }
 
     const thirdPartyQuery = `
       SELECT 
-        o.third_party_name,
+        o.third_party_name as name,
         COUNT(DISTINCT o.id) as total_orders,
         COALESCE(SUM(o.total_usd), 0) as total_revenue_usd,
         COALESCE(SUM(o.total_lbp), 0) as total_revenue_lbp,
@@ -1051,7 +1200,7 @@ router.get('/thirdparty', authenticateToken, async (req, res) => {
       ${whereClause}
       GROUP BY o.third_party_name
       ORDER BY total_revenue_usd DESC
-      LIMIT ? OFFSET ?
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
     params.push(limit, offset);
@@ -1072,7 +1221,7 @@ router.get('/thirdparty', authenticateToken, async (req, res) => {
 });
 
 // Get third party details with orders and revenue split
-router.get('/thirdparty/:name', authenticateToken, async (req, res) => {
+router.get('/thirdparties/:name', authenticateToken, async (req, res) => {
   try {
     const { name } = req.params;
     const { from_date, to_date } = req.query;

@@ -193,7 +193,16 @@ router.post('/', authenticateToken, async (req, res) => {
       total_lbp = 0,
       status = 'new',
       payment_status = 'unpaid',
-      external_id
+      prepaid_status = 'unpaid',
+      external_id,
+      // New delivery location fields
+      delivery_country = 'Lebanon',
+      delivery_region,
+      delivery_sub_region,
+      // Google Maps fields
+      latitude,
+      longitude,
+      location_text
     } = req.body;
 
     // Generate order reference if not provided
@@ -211,6 +220,59 @@ router.post('/', authenticateToken, async (req, res) => {
     const finalFeeUsd = fee_usd || fees_usd || 0;
     const finalFeeLbp = fee_lbp || fees_lbp || 0;
     const finalDeliveryMode = delivery_mode || delivery_type || 'direct';
+
+    // Look up delivery price if location is provided
+    let deliveryPriceId = null;
+    let deliveryFeeLbp = finalFeeLbp;
+    let deliveryFeeUsd = finalFeeUsd;
+
+    if (delivery_region) {
+      try {
+        const priceQuery = `
+          SELECT * FROM delivery_prices 
+          WHERE country = ? AND region = ? AND is_active = 1
+        `;
+        let priceParams = [delivery_country, delivery_region];
+
+        if (delivery_sub_region) {
+          priceQuery += ` AND sub_region = ?`;
+          priceParams.push(delivery_sub_region);
+        } else {
+          priceQuery += ` AND sub_region IS NULL`;
+        }
+
+        priceQuery += ` ORDER BY created_at DESC LIMIT 1`;
+
+        const priceResult = await query(priceQuery, priceParams);
+
+        if (priceResult.length > 0) {
+          const deliveryPrice = priceResult[0];
+          deliveryPriceId = deliveryPrice.id;
+          deliveryFeeLbp = deliveryPrice.price_lbp;
+          deliveryFeeUsd = deliveryPrice.price_usd;
+        } else {
+          // Try without sub_region if no exact match found
+          if (delivery_sub_region) {
+            const fallbackQuery = `
+              SELECT * FROM delivery_prices 
+              WHERE country = ? AND region = ? AND sub_region IS NULL AND is_active = 1
+              ORDER BY created_at DESC LIMIT 1
+            `;
+            const fallbackResult = await query(fallbackQuery, [delivery_country, delivery_region]);
+            
+            if (fallbackResult.length > 0) {
+              const deliveryPrice = fallbackResult[0];
+              deliveryPriceId = deliveryPrice.id;
+              deliveryFeeLbp = deliveryPrice.price_lbp;
+              deliveryFeeUsd = deliveryPrice.price_usd;
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('Error looking up delivery price:', error.message);
+        // Continue with manual fees if lookup fails
+      }
+    }
 
     // Use MCP layer for order creation
     const orderData = {
@@ -236,10 +298,18 @@ router.post('/', authenticateToken, async (req, res) => {
       fee_lbp: finalFeeLbp,
       total_usd: finalTotalUsd,
       total_lbp: finalTotalLbp,
-      delivery_fee_usd: finalTotalUsd, // Set delivery fee same as total for now
-      delivery_fee_lbp: finalTotalLbp,
+      delivery_fee_usd: deliveryFeeUsd,
+      delivery_fee_lbp: deliveryFeeLbp,
+      delivery_country: delivery_country,
+      delivery_region: delivery_region || null,
+      delivery_sub_region: delivery_sub_region || null,
+      delivery_price_id: deliveryPriceId,
       status: status,
       payment_status: payment_status,
+      prepaid_status: prepaid_status,
+      latitude: latitude || null,
+      longitude: longitude || null,
+      location_text: location_text || '',
       external_id: external_id || null,
       created_by: req.user.id
     };
@@ -252,10 +322,16 @@ router.post('/', authenticateToken, async (req, res) => {
         o.*,
         d.full_name as driver_name,
         d.phone as driver_phone,
-        u.full_name as created_by_name
+        u.full_name as created_by_name,
+        dp.country as delivery_price_country,
+        dp.region as delivery_price_region,
+        dp.sub_region as delivery_price_sub_region,
+        dp.price_lbp as delivery_price_lbp,
+        dp.price_usd as delivery_price_usd
       FROM orders o
       LEFT JOIN drivers d ON o.driver_id = d.id
       LEFT JOIN users u ON o.created_by = u.id
+      LEFT JOIN delivery_prices dp ON o.delivery_price_id = dp.id
       WHERE o.id = ?
     `;
     
@@ -752,6 +828,122 @@ function generateOrderRef() {
   const random = Math.random().toString(36).substr(2, 5);
   return `ORD-${timestamp}-${random}`.toUpperCase();
 }
+
+// Client autocomplete/search
+router.get('/clients/search', authenticateToken, async (req, res) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q || q.length < 2) {
+      return res.json({
+        success: true,
+        data: []
+      });
+    }
+
+    const searchQuery = `
+      SELECT 
+        id,
+        business_name,
+        contact_person,
+        phone,
+        address,
+        instagram,
+        website,
+        google_location
+      FROM clients 
+      WHERE LOWER(business_name) LIKE LOWER($1) 
+         OR LOWER(contact_person) LIKE LOWER($1)
+         OR LOWER(phone) LIKE LOWER($1)
+      ORDER BY 
+        CASE 
+          WHEN LOWER(business_name) LIKE LOWER($1) THEN 1
+          WHEN LOWER(contact_person) LIKE LOWER($1) THEN 2
+          ELSE 3
+        END,
+        business_name
+      LIMIT 10
+    `;
+
+    const results = await query(searchQuery, [`%${q}%`]);
+
+    res.json({
+      success: true,
+      data: results
+    });
+
+  } catch (error) {
+    console.error('Client search error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to search clients',
+      error: error.message
+    });
+  }
+});
+
+// Get client details by phone or business name
+router.get('/clients/details', authenticateToken, async (req, res) => {
+  try {
+    const { phone, business_name } = req.query;
+    
+    if (!phone && !business_name) {
+      return res.status(400).json({
+        success: false,
+        message: 'phone or business_name is required'
+      });
+    }
+
+    let whereClause = '';
+    let params = [];
+
+    if (phone) {
+      whereClause = 'WHERE phone = $1';
+      params = [phone];
+    } else if (business_name) {
+      whereClause = 'WHERE LOWER(business_name) = LOWER($1)';
+      params = [business_name];
+    }
+
+    const clientQuery = `
+      SELECT 
+        id,
+        business_name,
+        contact_person,
+        phone,
+        address,
+        instagram,
+        website,
+        google_location,
+        category
+      FROM clients 
+      ${whereClause}
+      LIMIT 1
+    `;
+
+    const results = await query(clientQuery, params);
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Client not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: results[0]
+    });
+
+  } catch (error) {
+    console.error('Get client details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get client details',
+      error: error.message
+    });
+  }
+});
 
 module.exports = router;
 

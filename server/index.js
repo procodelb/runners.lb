@@ -12,14 +12,20 @@ const authRoutes = require('./routes/auth');
 const dashboardRoutes = require('./routes/dashboard');
 const crmRoutes = require('./routes/crm');
 const ordersRoutes = require('./routes/orders');
+const ordersBatchRoutes = require('./routes/ordersBatch');
 const orderHistoryRoutes = require('./routes/orderHistory');
 const driversRoutes = require('./routes/drivers');
 const accountingRoutes = require('./routes/accounting');
+const accountingEnhancedRoutes = require('./routes/accountingEnhanced');
 const cashboxRoutes = require('./routes/cashbox');
 const priceListRoutes = require('./routes/priceList');
 const transactionsRoutes = require('./routes/transactions');
 const settingsRoutes = require('./routes/settings');
 const analyticsRoutes = require('./routes/analytics');
+const deliveryPricesRoutes = require('./routes/deliveryPrices');
+const paymentsRoutes = require('./routes/payments');
+const clientAccountsRoutes = require('./routes/clientAccounts');
+const priceImportRoutes = require('./routes/priceImport');
 const { authenticateToken } = require('./middleware/auth');
 
 const app = express();
@@ -51,6 +57,8 @@ const allowedOrigins = [
   "http://127.0.0.1:5175",
   "https://runners-lb.vercel.app"
 ];
+
+console.log('🌐 CORS allowed origins:', allowedOrigins);
 
 const io = socketIo(server, {
   cors: {
@@ -155,15 +163,21 @@ app.use('/api/dashboard', authenticateToken, dashboardRoutes);
 app.use('/api/crm', authenticateToken, crmRoutes);
 app.use('/api/clients', authenticateToken, crmRoutes); // Add alias for clients endpoint
 app.use('/api/orders', authenticateToken, ordersRoutes);
+app.use('/api/orders/batch', authenticateToken, ordersBatchRoutes);
 app.use('/api/orders/history', authenticateToken, orderHistoryRoutes); // Add alias for order history
 app.use('/api/order-history', authenticateToken, orderHistoryRoutes);
 app.use('/api/drivers', authenticateToken, driversRoutes);
 app.use('/api/accounting', authenticateToken, accountingRoutes);
+app.use('/api/accounting', authenticateToken, accountingEnhancedRoutes);
 app.use('/api/cashbox', authenticateToken, cashboxRoutes);
 app.use('/api/price-list', authenticateToken, priceListRoutes);
 app.use('/api/transactions', authenticateToken, transactionsRoutes);
 app.use('/api/settings', authenticateToken, settingsRoutes);
 app.use('/api/analytics', authenticateToken, analyticsRoutes);
+app.use('/api/delivery-prices', authenticateToken, deliveryPricesRoutes);
+app.use('/api/payments', authenticateToken, paymentsRoutes);
+app.use('/api/client-accounts', authenticateToken, clientAccountsRoutes);
+app.use('/api/price-import', authenticateToken, priceImportRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

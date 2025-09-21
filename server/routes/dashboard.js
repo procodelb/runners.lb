@@ -45,6 +45,71 @@ router.get('/stats', authenticateToken, async (req, res) => {
       lbp: parseInt(totalRevenueResult[0]?.total_revenue_lbp) || 0
     };
 
+    // Get total incomes and expenses from transactions
+    const totalIncomesQuery = `
+      SELECT 
+        COALESCE(SUM(amount_usd), 0) as total_incomes_usd,
+        COALESCE(SUM(amount_lbp), 0) as total_incomes_lbp
+      FROM transactions 
+      WHERE direction = 'credit' AND category IN ('income', 'client_payment')
+    `;
+    const totalIncomesResult = await query(totalIncomesQuery);
+    const totalIncomes = {
+      usd: parseFloat(totalIncomesResult[0]?.total_incomes_usd) || 0,
+      lbp: parseInt(totalIncomesResult[0]?.total_incomes_lbp) || 0
+    };
+
+    const totalExpensesQuery = `
+      SELECT 
+        COALESCE(SUM(amount_usd), 0) as total_expenses_usd,
+        COALESCE(SUM(amount_lbp), 0) as total_expenses_lbp
+      FROM transactions 
+      WHERE direction = 'debit' AND category IN ('expense', 'driver_payment')
+    `;
+    const totalExpensesResult = await query(totalExpensesQuery);
+    const totalExpenses = {
+      usd: parseFloat(totalExpensesResult[0]?.total_expenses_usd) || 0,
+      lbp: parseInt(totalExpensesResult[0]?.total_expenses_lbp) || 0
+    };
+
+    // Calculate net profit
+    const netProfit = {
+      usd: totalIncomes.usd - totalExpenses.usd,
+      lbp: totalIncomes.lbp - totalExpenses.lbp
+    };
+
+    // Get orders completed today
+    const ordersCompletedTodayQuery = `
+      SELECT COUNT(*) as orders_completed_today
+      FROM orders 
+      WHERE status = 'completed' AND DATE(completed_at) = CURRENT_DATE
+    `;
+    const ordersCompletedTodayResult = await query(ordersCompletedTodayQuery);
+    const ordersCompletedToday = ordersCompletedTodayResult[0]?.orders_completed_today || 0;
+
+    // Get orders completed this month
+    const ordersCompletedThisMonthQuery = `
+      SELECT COUNT(*) as orders_completed_this_month
+      FROM orders 
+      WHERE status = 'completed' AND DATE_TRUNC('month', completed_at) = DATE_TRUNC('month', CURRENT_DATE)
+    `;
+    const ordersCompletedThisMonthResult = await query(ordersCompletedThisMonthQuery);
+    const ordersCompletedThisMonth = ordersCompletedThisMonthResult[0]?.orders_completed_this_month || 0;
+
+    // Get current cashbox balance
+    const cashboxBalanceQuery = `
+      SELECT 
+        COALESCE(balance_usd, 0) as balance_usd,
+        COALESCE(balance_lbp, 0) as balance_lbp
+      FROM cashbox 
+      WHERE id = 1
+    `;
+    const cashboxBalanceResult = await query(cashboxBalanceQuery);
+    const cashboxBalance = {
+      usd: parseFloat(cashboxBalanceResult[0]?.balance_usd) || 0,
+      lbp: parseInt(cashboxBalanceResult[0]?.balance_lbp) || 0
+    };
+
     // Get pending payments
     const pendingPaymentsQuery = `
       SELECT 
@@ -116,6 +181,12 @@ router.get('/stats', authenticateToken, async (req, res) => {
         totalClients,
         activeDrivers,
         totalRevenue,
+        totalIncomes,
+        totalExpenses,
+        netProfit,
+        ordersCompletedToday,
+        ordersCompletedThisMonth,
+        cashboxBalance,
         pendingPayments,
         ordersByStatus,
         revenueByMonth,
@@ -127,10 +198,16 @@ router.get('/stats', authenticateToken, async (req, res) => {
           total_drivers: activeDrivers,
           total_revenue_usd: totalRevenue.usd,
           total_revenue_lbp: totalRevenue.lbp,
-          total_expense_usd: 0,
-          total_expense_lbp: 0,
-          net_usd: totalRevenue.usd,
-          net_lbp: totalRevenue.lbp
+          total_incomes_usd: totalIncomes.usd,
+          total_incomes_lbp: totalIncomes.lbp,
+          total_expenses_usd: totalExpenses.usd,
+          total_expenses_lbp: totalExpenses.lbp,
+          net_profit_usd: netProfit.usd,
+          net_profit_lbp: netProfit.lbp,
+          orders_completed_today: ordersCompletedToday,
+          orders_completed_this_month: ordersCompletedThisMonth,
+          cashbox_balance_usd: cashboxBalance.usd,
+          cashbox_balance_lbp: cashboxBalance.lbp
         }
       }
     });
@@ -157,7 +234,7 @@ router.get('/recent-activity', authenticateToken, async (req, res) => {
       FROM orders o
       LEFT JOIN drivers d ON o.driver_id = d.id
       ORDER BY o.created_at DESC
-      LIMIT ?
+      LIMIT $1
     `;
     
     const ordersResult = await query(recentOrdersQuery, [limit]);
@@ -170,7 +247,7 @@ router.get('/recent-activity', authenticateToken, async (req, res) => {
       FROM transactions t
       LEFT JOIN users u ON t.created_by = u.id
       ORDER BY t.created_at DESC
-      LIMIT ?
+      LIMIT $1
     `;
     
     const transactionsResult = await query(recentTransactionsQuery, [limit]);
@@ -187,6 +264,99 @@ router.get('/recent-activity', authenticateToken, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch recent activity',
+      error: error.message 
+    });
+  }
+});
+
+// Get process timeline - recent actions across the system
+router.get('/process-timeline', authenticateToken, async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+
+    // Get recent orders with status changes
+    const recentOrdersQuery = `
+      SELECT 
+        'order' as type,
+        o.id,
+        o.status,
+        o.payment_status,
+        o.customer_name,
+        o.total_usd,
+        o.total_lbp,
+        o.created_at,
+        o.updated_at,
+        d.full_name as driver_name,
+        u.full_name as created_by_name
+      FROM orders o
+      LEFT JOIN drivers d ON o.driver_id = d.id
+      LEFT JOIN users u ON o.created_by = u.id
+      ORDER BY o.updated_at DESC
+      LIMIT $1
+    `;
+    
+    const ordersResult = await query(recentOrdersQuery, [limit]);
+
+    // Get recent transactions
+    const recentTransactionsQuery = `
+      SELECT 
+        'transaction' as type,
+        t.id,
+        t.tx_type as status,
+        t.amount_usd,
+        t.amount_lbp,
+        t.description,
+        t.category,
+        t.direction,
+        t.created_at,
+        t.updated_at,
+        u.full_name as created_by_name
+      FROM transactions t
+      LEFT JOIN users u ON t.created_by = u.id
+      ORDER BY t.created_at DESC
+      LIMIT $1
+    `;
+    
+    const transactionsResult = await query(recentTransactionsQuery, [limit]);
+
+    // Get recent cashbox entries
+    const recentCashboxQuery = `
+      SELECT 
+        'cashbox' as type,
+        c.id,
+        c.entry_type as status,
+        c.amount_usd,
+        c.amount_lbp,
+        c.description,
+        c.created_at,
+        c.updated_at,
+        u.full_name as created_by_name,
+        d.full_name as driver_name
+      FROM cashbox_entries c
+      LEFT JOIN users u ON c.created_by = u.id
+      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
+      ORDER BY c.created_at DESC
+      LIMIT $1
+    `;
+    
+    const cashboxResult = await query(recentCashboxQuery, [limit]);
+
+    // Combine and sort all activities by timestamp
+    const allActivities = [
+      ...ordersResult.map(item => ({ ...item, timestamp: item.updated_at || item.created_at })),
+      ...transactionsResult.map(item => ({ ...item, timestamp: item.created_at })),
+      ...cashboxResult.map(item => ({ ...item, timestamp: item.created_at }))
+    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, limit);
+
+    res.json({
+      success: true,
+      data: allActivities
+    });
+  } catch (error) {
+    console.error('Error fetching process timeline:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch process timeline',
       error: error.message 
     });
   }

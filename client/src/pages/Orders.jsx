@@ -22,10 +22,16 @@ import {
   Loader2,
   Eye,
   UserCheck,
-  CreditCard
+  CreditCard,
+  Table,
+  Download,
+  Upload,
+  Grid3X3
 } from 'lucide-react';
 import api from '../api';
 import toast from 'react-hot-toast';
+import ExcelOrderForm from '../components/ExcelOrderForm';
+import OrdersGrid from '../components/OrdersGrid';
 
 const Orders = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,8 +41,10 @@ const Orders = () => {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showExcelForm, setShowExcelForm] = useState(false);
   const [editingOrder, setEditingOrder] = useState(null);
   const [selectedDriver, setSelectedDriver] = useState('');
+  const [viewMode, setViewMode] = useState('grid'); // 'table' or 'grid'
   const [formData, setFormData] = useState({
     order_ref: '',
     voucher_code: '',
@@ -363,219 +371,257 @@ const Orders = () => {
     <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Orders Management</h1>
-        <button
-          onClick={() => {
-            setEditingOrder(null);
-            resetForm();
-            setShowAddModal(true);
-          }}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          Add Order
-        </button>
-      </div>
-
-      {/* Search and Filters */}
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-          <div>
-            <input
-              type="text"
-              placeholder="Search orders..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        <div className="flex items-center space-x-3">
+          <div className="flex items-center bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`px-3 py-1 rounded-md flex items-center gap-2 transition-colors ${
+                viewMode === 'grid' ? 'bg-white shadow-sm' : 'text-gray-600'
+              }`}
             >
-              <option value="">All Statuses</option>
-              <option value="new">New</option>
-              <option value="assigned">Assigned</option>
-              <option value="picked_up">Picked Up</option>
-              <option value="in_transit">In Transit</option>
-              <option value="delivered">Delivered</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </div>
-          <div>
-            <select
-              value={selectedBrand}
-              onChange={(e) => setSelectedBrand(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              <Grid3X3 className="w-4 h-4" />
+              Grid
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              className={`px-3 py-1 rounded-md flex items-center gap-2 transition-colors ${
+                viewMode === 'table' ? 'bg-white shadow-sm' : 'text-gray-600'
+              }`}
             >
-              <option value="">All Brands</option>
-              {clients?.map(client => (
-                <option key={client.id} value={client.business_name}>
-                  {client.business_name}
-                </option>
-              ))}
-            </select>
+              <Table className="w-4 h-4" />
+              Table
+            </button>
           </div>
-          <div>
-            <select
-              value={selectedType}
-              onChange={(e) => setSelectedType(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">All Types</option>
-              <option value="ecommerce">E-commerce</option>
-              <option value="instant">Instant</option>
-              <option value="go_to_market">Go to Market</option>
-            </select>
-          </div>
-          <div>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end">
           <button
-            onClick={async () => {
-              const params = new URLSearchParams();
-              if (searchTerm) params.set('q', searchTerm);
-              if (selectedStatus) params.set('status', selectedStatus);
-              if (selectedBrand) params.set('brand_name', selectedBrand);
-              if (selectedType) params.set('type', selectedType);
-              if (dateFrom) params.set('date_from', dateFrom);
-              if (dateTo) params.set('date_to', dateTo);
-              const token = localStorage.getItem('token');
-              const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
-              const resp = await fetch(`${apiBase}/api/orders/export/csv?${params.toString()}`, {
-                headers: { Authorization: `Bearer ${token}` }
-              });
-              const blob = await resp.blob();
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = 'orders_export.csv';
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              URL.revokeObjectURL(url);
-            }}
-            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+            onClick={() => setShowExcelForm(true)}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
           >
-            Export CSV
+            <Table className="w-5 h-5" />
+            Excel Form
           </button>
+          {viewMode === 'table' && (
+            <button
+              onClick={() => {
+                setEditingOrder(null);
+                resetForm();
+                setShowAddModal(true);
+              }}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+            >
+              <Plus className="w-5 h-5" />
+              Add Order
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Orders Table */}
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Order Details
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Customer
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Driver
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Amount
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {orders?.map((order) => (
-                <tr key={order.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-4 whitespace-nowrap">
-                    <div className="flex flex-col">
-                      <div className="text-sm font-medium text-gray-900">
-                        {order.order_ref}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {order.brand_name}
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        {formatDate(order.created_at)}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-3 py-4 whitespace-nowrap">
-                    <div className="flex flex-col">
-                      <div className="text-sm font-medium text-gray-900">
-                        {order.customer_name}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {order.customer_phone}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-3 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {order.driver_name || 'Unassigned'}
-                    </div>
-                  </td>
-                  <td className="px-3 py-4 whitespace-nowrap">
-                    <div className="flex flex-col gap-1">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(order.status)}`}>
-                        {order.status}
-                      </span>
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getPaymentStatusColor(order.payment_status)}`}>
-                        {order.payment_status}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {formatCurrency(order.total_usd, 'USD')}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {formatCurrency(order.total_lbp, 'LBP')}
-                    </div>
-                  </td>
-                  <td className="px-3 py-4 whitespace-nowrap text-sm font-medium">
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={() => handleEdit(order)}
-                        className="text-indigo-600 hover:text-indigo-900"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(order.id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* Render Grid or Table View */}
+      {viewMode === 'grid' ? (
+        <OrdersGrid />
+      ) : (
+        <>
+          {/* Search and Filters */}
+          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+              <div>
+                <input
+                  type="text"
+                  placeholder="Search orders..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <select
+                  value={selectedStatus}
+                  onChange={(e) => setSelectedStatus(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">All Statuses</option>
+                  <option value="new">New</option>
+                  <option value="assigned">Assigned</option>
+                  <option value="picked_up">Picked Up</option>
+                  <option value="in_transit">In Transit</option>
+                  <option value="delivered">Delivered</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </div>
+              <div>
+                <select
+                  value={selectedBrand}
+                  onChange={(e) => setSelectedBrand(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">All Brands</option>
+                  {clients?.map(client => (
+                    <option key={client.id} value={client.business_name}>
+                      {client.business_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <select
+                  value={selectedType}
+                  onChange={(e) => setSelectedType(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">All Types</option>
+                  <option value="ecommerce">E-commerce</option>
+                  <option value="instant">Instant</option>
+                  <option value="go_to_market">Go to Market</option>
+                </select>
+              </div>
+              <div>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={async () => {
+                  const params = new URLSearchParams();
+                  if (searchTerm) params.set('q', searchTerm);
+                  if (selectedStatus) params.set('status', selectedStatus);
+                  if (selectedBrand) params.set('brand_name', selectedBrand);
+                  if (selectedType) params.set('type', selectedType);
+                  if (dateFrom) params.set('date_from', dateFrom);
+                  if (dateTo) params.set('date_to', dateTo);
+                  const token = localStorage.getItem('token');
+                  const apiBase = import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com';
+                  const resp = await fetch(`${apiBase}/api/orders/export/csv?${params.toString()}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                  });
+                  const blob = await resp.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'orders_export.csv';
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+              >
+                Export CSV
+              </button>
+            </div>
+          </div>
+
+          {/* Orders Table */}
+          <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Order Details
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Customer
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Driver
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Amount
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {orders?.map((order) => (
+                    <tr key={order.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-4 whitespace-nowrap">
+                        <div className="flex flex-col">
+                          <div className="text-sm font-medium text-gray-900">
+                            {order.order_ref}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {order.brand_name}
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            {formatDate(order.created_at)}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 whitespace-nowrap">
+                        <div className="flex flex-col">
+                          <div className="text-sm font-medium text-gray-900">
+                            {order.customer_name}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {order.customer_phone}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          {order.driver_name || 'Unassigned'}
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 whitespace-nowrap">
+                        <div className="flex flex-col gap-1">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(order.status)}`}>
+                            {order.status}
+                          </span>
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getPaymentStatusColor(order.payment_status)}`}>
+                            {order.payment_status}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          {formatCurrency(order.total_usd, 'USD')}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {formatCurrency(order.total_lbp, 'LBP')}
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 whitespace-nowrap text-sm font-medium">
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => handleEdit(order)}
+                            className="text-indigo-600 hover:text-indigo-900"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(order.id)}
+                            className="text-red-600 hover:text-red-900"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Add/Edit Modal */}
       <AnimatePresence>
@@ -919,6 +965,17 @@ const Orders = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Excel Order Form Modal */}
+      {showExcelForm && (
+        <ExcelOrderForm
+          onClose={() => setShowExcelForm(false)}
+          onSuccess={(data) => {
+            console.log('Orders created:', data);
+            setShowExcelForm(false);
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -269,71 +269,131 @@ router.post('/return', authenticateToken, async (req, res) => {
   }
 });
 
-// Add cashbox entry and update snapshot atomically
-router.post('/entry', authenticateToken, async (req, res) => {
+// Add income - simplified endpoint
+router.post('/income', authenticateToken, async (req, res) => {
   try {
     const {
-      type,
       amount_usd = 0,
       amount_lbp = 0,
-      description,
-      driver_id
+      description = 'Income'
     } = req.body;
 
-    if (!type) {
+    // Validate that at least one amount is provided
+    if (!amount_usd && !amount_lbp) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Entry type is required' 
+        message: 'At least one amount (USD or LBP) is required' 
       });
     }
 
-    // Use MCP layer for entry creation
-    const entryData = {
-      entry_type: type,
+    // Get current balance
+    const currentBalance = await getCashboxBalance();
+    
+    // Calculate new balance
+    const newBalanceUsd = currentBalance.balance_usd + (amount_usd || 0);
+    const newBalanceLbp = currentBalance.balance_lbp + (amount_lbp || 0);
+
+    // Create transaction record
+    const transactionData = {
+      tx_type: 'income',
       amount_usd: amount_usd || 0,
       amount_lbp: amount_lbp || 0,
-      description: description || '',
-      actor_type: driver_id ? 'driver' : null,
-      actor_id: driver_id || null,
+      description: description,
+      category: 'income',
+      direction: 'credit',
       created_by: req.user.id
     };
-
-    const entryRes = await mcp.create('cashbox_entries', entryData);
-
-    // Update snapshot
-    const isCredit = ['cash_in', 'driver_return', 'client_payment'].includes(type);
-    const usdDelta = Number(amount_usd || 0) * (isCredit ? 1 : -1);
-    const lbpDelta = Number(amount_lbp || 0) * (isCredit ? 1 : -1);
     
-    // Get current balance and update
-    const currentBalance = await getCashboxBalance();
-    await run(`
-      UPDATE cashbox 
-      SET balance_usd = ?, balance_lbp = ?, type = ?, amount_usd = ?, amount_lbp = ?, description = ?
-      WHERE id = 1
-    `, [
-      currentBalance.balance_usd + usdDelta,
-      currentBalance.balance_lbp + lbpDelta,
-      type,
-      amount_usd || 0,
-      amount_lbp || 0,
-      description || ''
-    ]);
+    await mcp.create('transactions', transactionData);
 
-    const entry = await query(`
-      SELECT c.*, u.full_name as created_by_name, d.full_name as driver_name
-      FROM cashbox_entries c
-      LEFT JOIN users u ON c.created_by = u.id
-      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
-      WHERE c.id = ?
-    `, [entryRes.id]);
+    // Update cashbox balance atomically
+    await mcp.update('cashbox', 1, {
+      balance_usd: newBalanceUsd,
+      balance_lbp: newBalanceLbp
+    });
 
-    res.status(201).json({ success: true, message: 'Cashbox entry created successfully', data: entry[0] });
+    res.status(201).json({ 
+      success: true, 
+      message: 'Income added successfully',
+      data: {
+        new_balance_usd: newBalanceUsd,
+        new_balance_lbp: newBalanceLbp
+      }
+    });
   } catch (error) {
-    console.error('Error creating cashbox entry:', error);
+    console.error('Error adding income:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to create cashbox entry',
+      message: 'Failed to add income',
+      error: error.message 
+    });
+  }
+});
+
+// Add expense - simplified endpoint
+router.post('/expense', authenticateToken, async (req, res) => {
+  try {
+    const {
+      amount_usd = 0,
+      amount_lbp = 0,
+      description = 'Expense'
+    } = req.body;
+
+    // Validate that at least one amount is provided
+    if (!amount_usd && !amount_lbp) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'At least one amount (USD or LBP) is required' 
+      });
+    }
+
+    // Get current balance
+    const currentBalance = await getCashboxBalance();
+    
+    // Check if there's sufficient balance
+    if (currentBalance.balance_usd < (amount_usd || 0) || currentBalance.balance_lbp < (amount_lbp || 0)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Insufficient cashbox balance for this expense' 
+      });
+    }
+    
+    // Calculate new balance
+    const newBalanceUsd = currentBalance.balance_usd - (amount_usd || 0);
+    const newBalanceLbp = currentBalance.balance_lbp - (amount_lbp || 0);
+
+    // Create transaction record
+    const transactionData = {
+      tx_type: 'expense',
+      amount_usd: amount_usd || 0,
+      amount_lbp: amount_lbp || 0,
+      description: description,
+      category: 'expense',
+      direction: 'debit',
+      created_by: req.user.id
+    };
+    
+    await mcp.create('transactions', transactionData);
+
+    // Update cashbox balance atomically
+    await mcp.update('cashbox', 1, {
+      balance_usd: newBalanceUsd,
+      balance_lbp: newBalanceLbp
+    });
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Expense added successfully',
+      data: {
+        new_balance_usd: newBalanceUsd,
+        new_balance_lbp: newBalanceLbp
+      }
+    });
+  } catch (error) {
+    console.error('Error adding expense:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to add expense',
       error: error.message 
     });
   }
@@ -773,6 +833,45 @@ router.get('/balance', authenticateToken, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch cashbox balance',
+      error: error.message 
+    });
+  }
+});
+
+// Get recent cashbox timeline
+router.get('/timeline', authenticateToken, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    
+    const timelineQuery = `
+      SELECT 
+        t.id,
+        t.tx_type,
+        t.amount_usd,
+        t.amount_lbp,
+        t.description,
+        t.category,
+        t.direction,
+        t.created_at,
+        u.full_name as created_by_name
+      FROM transactions t
+      LEFT JOIN users u ON t.created_by = u.id
+      WHERE t.category IN ('income', 'expense', 'cash_management')
+      ORDER BY t.created_at DESC
+      LIMIT $1
+    `;
+    
+    const timeline = await query(timelineQuery, [limit]);
+
+    res.json({
+      success: true,
+      data: timeline || []
+    });
+  } catch (error) {
+    console.error('Error fetching cashbox timeline:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch cashbox timeline',
       error: error.message 
     });
   }

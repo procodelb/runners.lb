@@ -16,6 +16,7 @@ import CRM from './pages/CRM';
 import Orders from './pages/Orders';
 import Drivers from './pages/Drivers';
 import Accounting from './pages/Accounting';
+import NewAccounting from './pages/NewAccounting';
 import Cashbox from './pages/Cashbox';
 import PriceList from './pages/PriceList';
 import OrderHistory from './pages/OrderHistory';
@@ -219,7 +220,7 @@ const AppContent = () => {
   return (
     <SocketProvider socket={socket}>
       <DebugAuth />
-      <Router>
+      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={
@@ -302,7 +303,7 @@ const AppContent = () => {
                 console.log('💰 AppContent: Rendering accounting route'); 
                 return (
                   <Layout>
-                    <Accounting />
+                    <NewAccounting />
                   </Layout>
                 ); 
               })()
