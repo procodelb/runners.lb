@@ -6,6 +6,7 @@
   - Prints SQL to stdout if production
 */
 
+process.env.USE_SQLITE = process.env.USE_SQLITE || 'true';
 const { query } = require('../config/database');
 
 const MIGRATION_SQL = `
