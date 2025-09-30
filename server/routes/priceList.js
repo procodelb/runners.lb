@@ -6,7 +6,7 @@ const router = express.Router();
 // Get all price list items
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { page = 1, limit = 20, country = '', area = '' } = req.query;
+    const { page = 1, limit = 20, country = '', area = '', search = '' } = req.query;
     const offset = (page - 1) * limit;
     
     let whereClause = '';
@@ -25,6 +25,16 @@ router.get('/', authenticateToken, async (req, res) => {
       params.push(`%${area}%`);
     }
 
+    if (search) {
+      if (whereClause) {
+        whereClause += ' AND (LOWER(country) LIKE LOWER(?) OR LOWER(area) LIKE LOWER(?))';
+        params.push(`%${search}%`, `%${search}%`);
+      } else {
+        whereClause = 'WHERE (LOWER(country) LIKE LOWER(?) OR LOWER(area) LIKE LOWER(?))';
+        params.push(`%${search}%`, `%${search}%`);
+      }
+    }
+
     // Get total count
     const countQuery = `SELECT COUNT(*) as count FROM price_list ${whereClause}`;
     const countResult = await query(countQuery, params);
@@ -32,7 +42,14 @@ router.get('/', authenticateToken, async (req, res) => {
 
     // Get price list items
     const priceListQuery = `
-      SELECT id, country, area, fees_usd as fee_usd, fees_lbp as fee_lbp, created_at, updated_at FROM price_list
+      SELECT id, country, area, 
+             COALESCE(NULLIF(TRIM(fees_usd::text), ''), '0')::numeric as fee_usd, 
+             COALESCE(NULLIF(TRIM(fees_lbp::text), ''), '0')::numeric as fee_lbp, 
+             COALESCE(NULLIF(TRIM(third_party_fee_usd::text), ''), '0')::numeric as third_party_fee_usd, 
+             COALESCE(NULLIF(TRIM(third_party_fee_lbp::text), ''), '0')::numeric as third_party_fee_lbp,
+             COALESCE(is_active, true) as is_active,
+             created_at, updated_at 
+      FROM price_list
       ${whereClause}
       ORDER BY country, area
       LIMIT ? OFFSET ?
@@ -66,7 +83,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    const priceListQuery = 'SELECT id, country, area, fees_usd as fee_usd, fees_lbp as fee_lbp, created_at, updated_at FROM price_list WHERE id = ?';
+    const priceListQuery = 'SELECT id, country, area, fees_usd as fee_usd, fees_lbp as fee_lbp, COALESCE(is_active, true) as is_active, created_at, updated_at FROM price_list WHERE id = ?';
     const result = await query(priceListQuery, [id]);
     
     if (result.length === 0) {
@@ -90,6 +107,54 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Search price list items for autocomplete
+router.get('/search', authenticateToken, async (req, res) => {
+  try {
+    const { q = '' } = req.query;
+    
+    if (!q || q.length < 2) {
+      return res.json({
+        success: true,
+        data: []
+      });
+    }
+
+    const searchQuery = `
+      SELECT id, country, area, 
+             COALESCE(NULLIF(TRIM(fees_usd::text), ''), '0')::numeric as fee_usd, 
+             COALESCE(NULLIF(TRIM(fees_lbp::text), ''), '0')::numeric as fee_lbp, 
+             COALESCE(NULLIF(TRIM(third_party_fee_usd::text), ''), '0')::numeric as third_party_fee_usd, 
+             COALESCE(NULLIF(TRIM(third_party_fee_lbp::text), ''), '0')::numeric as third_party_fee_lbp
+      FROM price_list 
+      WHERE (LOWER(country) LIKE LOWER(?) OR LOWER(area) LIKE LOWER(?))
+      AND COALESCE(is_active, true) = true
+      ORDER BY 
+        CASE 
+          WHEN LOWER(area) LIKE LOWER(?) THEN 1
+          WHEN LOWER(country) LIKE LOWER(?) THEN 2
+          ELSE 3
+        END,
+        country, area
+      LIMIT 10
+    `;
+    
+    const searchTerm = `%${q}%`;
+    const result = await query(searchQuery, [searchTerm, searchTerm, searchTerm, searchTerm]);
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error searching price list:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to search price list',
+      error: error.message 
+    });
+  }
+});
+
 // Create new price list item
 router.post('/', authenticateToken, async (req, res) => {
   try {
@@ -97,7 +162,10 @@ router.post('/', authenticateToken, async (req, res) => {
       country,
       area,
       fee_usd = 0,
-      fee_lbp = 200000
+      fee_lbp = 0,
+      third_party_fee_usd = 0,
+      third_party_fee_lbp = 0,
+      is_active = true
     } = req.body;
 
     if (!country || !area) {
@@ -108,15 +176,24 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     const insertQuery = `
-      INSERT INTO price_list (country, area, fees_usd, fees_lbp)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO price_list (country, area, fees_usd, fees_lbp, third_party_fee_usd, third_party_fee_lbp, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
 
-    const params = [country, area, fee_usd, fee_lbp];
+    const params = [country, area, fee_usd, fee_lbp, third_party_fee_usd, third_party_fee_lbp, is_active];
     const result = await run(insertQuery, params);
 
     // Fetch the created item
-    const priceListQuery = 'SELECT id, country, area, fees_usd as fee_usd, fees_lbp as fee_lbp, created_at, updated_at FROM price_list WHERE id = ?';
+    const priceListQuery = `
+      SELECT id, country, area, 
+             COALESCE(fees_usd, 0) as fee_usd, 
+             COALESCE(fees_lbp, 0) as fee_lbp, 
+             COALESCE(third_party_fee_usd, 0) as third_party_fee_usd, 
+             COALESCE(third_party_fee_lbp, 0) as third_party_fee_lbp,
+             COALESCE(is_active, true) as is_active,
+             created_at, updated_at 
+      FROM price_list WHERE id = ?
+    `;
     const priceListResult = await query(priceListQuery, [result.id]);
 
     res.status(201).json({
@@ -161,7 +238,16 @@ router.put('/:id', authenticateToken, async (req, res) => {
     await run(updateQuery, values);
 
     // Fetch the updated item
-    const priceListQuery = 'SELECT id, country, area, fees_usd as fee_usd, fees_lbp as fee_lbp, created_at, updated_at FROM price_list WHERE id = ?';
+    const priceListQuery = `
+      SELECT id, country, area, 
+             COALESCE(fees_usd, 0) as fee_usd, 
+             COALESCE(fees_lbp, 0) as fee_lbp, 
+             COALESCE(third_party_fee_usd, 0) as third_party_fee_usd, 
+             COALESCE(third_party_fee_lbp, 0) as third_party_fee_lbp,
+             is_active,
+             created_at, updated_at 
+      FROM price_list WHERE id = ?
+    `;
     const priceListResult = await query(priceListQuery, [id]);
 
     if (priceListResult.length === 0) {
@@ -181,6 +267,50 @@ router.put('/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to update price list item',
+      error: error.message 
+    });
+  }
+});
+
+// Toggle price list item status
+router.patch('/:id/toggle-status', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_active } = req.body;
+
+    const updateQuery = `UPDATE price_list SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+    await run(updateQuery, [is_active ? 1 : 0, id]);
+
+    // Fetch the updated item
+    const priceListQuery = `
+      SELECT id, country, area, 
+             COALESCE(fees_usd, 0) as fee_usd, 
+             COALESCE(fees_lbp, 0) as fee_lbp, 
+             COALESCE(third_party_fee_usd, 0) as third_party_fee_usd, 
+             COALESCE(third_party_fee_lbp, 0) as third_party_fee_lbp,
+             COALESCE(is_active, true) as is_active,
+             created_at, updated_at 
+      FROM price_list WHERE id = ?
+    `;
+    const priceListResult = await query(priceListQuery, [id]);
+
+    if (priceListResult.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Price list item not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Price list item status updated successfully',
+      data: priceListResult[0]
+    });
+  } catch (error) {
+    console.error('Error toggling price list item status:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to update price list item status',
       error: error.message 
     });
   }

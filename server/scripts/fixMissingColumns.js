@@ -80,6 +80,23 @@ async function fixMissingColumns() {
       console.log('ℹ️ price_list area column check:', e.message);
     }
 
+    // Ensure third-party fee columns exist on price_list
+    try {
+      await pool.query(`ALTER TABLE price_list ADD COLUMN IF NOT EXISTS third_party_fee_usd NUMERIC(10,2) DEFAULT 0`);
+      await pool.query(`ALTER TABLE price_list ADD COLUMN IF NOT EXISTS third_party_fee_lbp BIGINT DEFAULT 0`);
+      console.log('✅ Ensured third-party fee columns on price_list');
+    } catch (e) {
+      console.log('ℹ️ price_list third-party fee columns check:', e.message);
+    }
+
+    // Ensure is_active column exists on price_list (boolean)
+    try {
+      await pool.query(`ALTER TABLE price_list ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
+      console.log('✅ Ensured is_active column on price_list');
+    } catch (e) {
+      console.log('ℹ️ price_list is_active column check:', e.message);
+    }
+
     // 3. Ensure clients table exists with proper structure
     console.log('📋 Ensuring clients table exists...');
     
@@ -172,6 +189,57 @@ async function fixMissingColumns() {
       console.log('✅ driver_operations table ensured');
     } catch (e) {
       console.log('ℹ️ driver_operations table already exists or error:', e.message);
+    }
+
+    // 5. Ensure orders computed totals and accounting flags
+    try {
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS computed_total_usd NUMERIC(12,2) DEFAULT 0`);
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS computed_total_lbp BIGINT DEFAULT 0`);
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS moved_to_history BOOLEAN DEFAULT false`);
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS accounting_cashed BOOLEAN DEFAULT false`);
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS moved_at TIMESTAMPTZ`);
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now()`);
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now()`);
+      console.log('✅ Ensured orders computed/accounting flags/created_at/updated_at columns');
+    } catch (e) {
+      console.log('ℹ️ orders column ensure check:', e.message);
+    }
+
+    // 6. Ensure cashbox tables exist or have required columns
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS cashbox_entries (
+          id SERIAL PRIMARY KEY,
+          order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+          entry_type TEXT NOT NULL,
+          amount_usd NUMERIC(12,2) DEFAULT 0,
+          amount_lbp BIGINT DEFAULT 0,
+          actor_type TEXT,
+          actor_id INTEGER,
+          description TEXT,
+          created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ DEFAULT now()
+        )
+      `);
+      console.log('✅ cashbox_entries ensured');
+    } catch (e) {
+      console.log('ℹ️ cashbox_entries ensure check:', e.message);
+    }
+
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS cashbox_reservations (
+          id SERIAL PRIMARY KEY,
+          order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+          amount_usd NUMERIC(12,2) DEFAULT 0,
+          amount_lbp BIGINT DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT now(),
+          released_at TIMESTAMPTZ
+        )
+      `);
+      console.log('✅ cashbox_reservations ensured');
+    } catch (e) {
+      console.log('ℹ️ cashbox_reservations ensure check:', e.message);
     }
 
     console.log('✅ All missing columns and tables have been fixed!');

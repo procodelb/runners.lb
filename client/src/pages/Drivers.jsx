@@ -37,8 +37,6 @@ const Drivers = () => {
     phone: '',
     address: '',
     notes: '',
-    default_fee_lbp: '',
-    default_fee_usd: '',
     active: true
   });
 
@@ -123,8 +121,6 @@ const Drivers = () => {
       phone: '',
       address: '',
       notes: '',
-      default_fee_lbp: '',
-      default_fee_usd: '',
       active: true
     });
   };
@@ -136,8 +132,6 @@ const Drivers = () => {
       phone: driver.phone,
       address: driver.address,
       notes: driver.notes,
-      default_fee_lbp: driver.default_fee_lbp || '',
-      default_fee_usd: driver.default_fee_usd || '',
       active: driver.active
     });
     setIsEditModalOpen(true);
@@ -333,16 +327,6 @@ const Drivers = () => {
                   )}
                 </div>
 
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Default Fee (LBP):</span>
-                    <span className="font-medium">{driver.default_fee_lbp?.toLocaleString() || '0'}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Default Fee (USD):</span>
-                    <span className="font-medium">${driver.default_fee_usd || '0'}</span>
-                  </div>
-                </div>
               </div>
             </motion.div>
           ))}
@@ -365,16 +349,18 @@ const Drivers = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+            onClick={() => { setIsAddModalOpen(false); resetForm(); }}
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto"
+              className="bg-white rounded-lg shadow-xl max-w-sm w-full max-h-[80vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
             >
-              <div className="p-6">
-                <h2 className="text-xl font-semibold mb-4">Add New Driver</h2>
-                <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="p-4">
+                <h2 className="text-lg font-semibold mb-3">Add New Driver</h2>
+                <form onSubmit={handleSubmit} className="space-y-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Full Name *
@@ -420,31 +406,7 @@ const Drivers = () => {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Default Fee (LBP)
-                      </label>
-                      <input
-                        type="number"
-                        value={formData.default_fee_lbp}
-                        onChange={(e) => setFormData({ ...formData, default_fee_lbp: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Default Fee (USD)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.default_fee_usd}
-                        onChange={(e) => setFormData({ ...formData, default_fee_usd: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                  </div>
+                  {/* Default fees removed by requirement */}
                   <div className="flex items-center">
                     <input
                       type="checkbox"
@@ -491,16 +453,18 @@ const Drivers = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+            onClick={() => { setIsEditModalOpen(false); setSelectedDriver(null); }}
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto"
+              className="bg-white rounded-lg shadow-xl max-w-sm w-full max-h-[80vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
             >
-              <div className="p-6">
-                <h2 className="text-xl font-semibold mb-4">Edit Driver</h2>
-                <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="p-4">
+                <h2 className="text-lg font-semibold mb-3">Edit Driver</h2>
+                <form onSubmit={handleSubmit} className="space-y-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Full Name *
@@ -546,31 +510,7 @@ const Drivers = () => {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Default Fee (LBP)
-                      </label>
-                      <input
-                        type="number"
-                        value={formData.default_fee_lbp}
-                        onChange={(e) => setFormData({ ...formData, default_fee_lbp: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Default Fee (USD)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.default_fee_usd}
-                        onChange={(e) => setFormData({ ...formData, default_fee_usd: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                  </div>
+                  {/* Default fees removed by requirement */}
                   <div className="flex items-center">
                     <input
                       type="checkbox"
@@ -666,14 +606,14 @@ const Drivers = () => {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto"
+              className="bg-white rounded-lg shadow-xl max-w-sm w-full max-h-[80vh] overflow-y-auto"
             >
-              <div className="p-6">
-                <h2 className="text-xl font-semibold mb-4">Add Driver Fees</h2>
-                <p className="text-gray-600 mb-4">
+              <div className="p-4">
+                <h2 className="text-lg font-semibold mb-3">Add Driver Fees</h2>
+                <p className="text-gray-600 mb-3 text-sm">
                   Adding fees for driver: <strong>{selectedDriver?.full_name}</strong>
                 </p>
-                <form onSubmit={handleAddFeesSubmit} className="space-y-4">
+                <form onSubmit={handleAddFeesSubmit} className="space-y-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Fee Type *

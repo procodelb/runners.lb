@@ -32,11 +32,14 @@ import api from '../api';
 import toast from 'react-hot-toast';
 import ExcelOrderForm from '../components/ExcelOrderForm';
 import OrdersGrid from '../components/OrdersGrid';
+import { searchClients, formatClientForAutocomplete } from '../utils/clientSearch';
+import { priceListApi } from '../api/priceList';
 
 const Orders = () => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('!cancelled');
   const [selectedBrand, setSelectedBrand] = useState('');
+  const [selectedClientCategory, setSelectedClientCategory] = useState('');
   const [selectedType, setSelectedType] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -45,9 +48,17 @@ const Orders = () => {
   const [editingOrder, setEditingOrder] = useState(null);
   const [selectedDriver, setSelectedDriver] = useState('');
   const [viewMode, setViewMode] = useState('grid'); // 'table' or 'grid'
+  const [deliveryModeFilter, setDeliveryModeFilter] = useState('');
+  
+  // Autocomplete states
+  const [clientSuggestions, setClientSuggestions] = useState([]);
+  const [addressSuggestions, setAddressSuggestions] = useState([]);
+  const [showClientSuggestions, setShowClientSuggestions] = useState(false);
+  const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [selectedAddress, setSelectedAddress] = useState(null);
   const [formData, setFormData] = useState({
     order_ref: '',
-    voucher_code: '',
     brand_name: '',
     customer_name: '',
     customer_phone: '',
@@ -60,6 +71,8 @@ const Orders = () => {
     notes: '',
     total_usd: '',
     total_lbp: '',
+    delivery_fees_usd: '',
+    delivery_fees_lbp: '',
     third_party_fee_usd: '',
     third_party_fee_lbp: '',
     driver_fee_usd: '',
@@ -70,8 +83,8 @@ const Orders = () => {
 
   // Fetch orders with search and filters
   const { data: orders, isLoading } = useQuery(
-    ['orders', searchTerm, selectedStatus, selectedBrand, selectedType, dateFrom, dateTo],
-    () => api.get(`/orders?search=${encodeURIComponent(searchTerm)}&status=${selectedStatus}&brand_name=${encodeURIComponent(selectedBrand)}&type=${selectedType}` + (dateFrom ? `&date_from=${dateFrom}` : '') + (dateTo ? `&date_to=${dateTo}` : '')), 
+    ['orders', searchTerm, selectedStatus, selectedBrand, selectedType, deliveryModeFilter, dateFrom, dateTo],
+    () => api.get(`/orders?search=${encodeURIComponent(searchTerm)}&status=${encodeURIComponent(selectedStatus)}&brand_name=${encodeURIComponent(selectedBrand)}&type=${selectedType}` + (deliveryModeFilter ? `&delivery_mode=${deliveryModeFilter}` : '') + (dateFrom ? `&date_from=${dateFrom}` : '') + (dateTo ? `&date_to=${dateTo}` : '')), 
     {
       keepPreviousData: true,
       select: (response) => response.data?.data || []
@@ -87,6 +100,11 @@ const Orders = () => {
   const { data: clients } = useQuery('clients', () => api.get('/clients'), {
     select: (response) => response.data?.data || []
   });
+
+  const clientCategories = Array.from(new Set((clients || []).map(c => c.category).filter(Boolean)));
+  const filteredClientsByCategory = selectedClientCategory
+    ? (clients || []).filter(c => c.category === selectedClientCategory)
+    : (clients || []);
 
   // Add new order mutation
   const addOrderMutation = useMutation(
@@ -144,9 +162,16 @@ const Orders = () => {
   const updateStatusMutation = useMutation(
     ({ id, status, payment_status }) => api.put(`/orders/${id}`, { status, payment_status }),
     {
-      onSuccess: () => {
+      onSuccess: (_resp, variables) => {
         queryClient.invalidateQueries('orders');
-        toast.success('Order status updated successfully!');
+        queryClient.invalidateQueries('accounting-list');
+        queryClient.invalidateQueries('accounting-entity');
+        queryClient.invalidateQueries('dashboard');
+        if (variables?.payment_status === 'paid') {
+          toast.success('Payment marked as paid. Accounting and dashboard refreshed.');
+        } else {
+          toast.success('Order status updated successfully!');
+        }
       },
       onError: (error) => {
         toast.error(error.response?.data?.message || 'Failed to update order status');
@@ -174,7 +199,6 @@ const Orders = () => {
   const resetForm = () => {
     setFormData({
       order_ref: '',
-      voucher_code: '',
       brand_name: '',
       customer_name: '',
       customer_phone: '',
@@ -187,11 +211,119 @@ const Orders = () => {
       notes: '',
       total_usd: '',
       total_lbp: '',
+      delivery_fees_usd: '',
+      delivery_fees_lbp: '',
       third_party_fee_usd: '',
       third_party_fee_lbp: '',
       driver_fee_usd: '',
       driver_fee_lbp: ''
     });
+    setSelectedClient(null);
+    setSelectedAddress(null);
+    setClientSuggestions([]);
+    setAddressSuggestions([]);
+    setShowClientSuggestions(false);
+    setShowAddressSuggestions(false);
+  };
+
+  // Client search autocomplete
+  const handleClientSearch = async (query) => {
+    if (query.length < 2) {
+      setClientSuggestions([]);
+      setShowClientSuggestions(false);
+      return;
+    }
+
+    try {
+      const results = await searchClients(query);
+      const formattedResults = results.map(formatClientForAutocomplete);
+      setClientSuggestions(formattedResults);
+      setShowClientSuggestions(true);
+    } catch (error) {
+      console.error('Error searching clients:', error);
+      setClientSuggestions([]);
+      setShowClientSuggestions(false);
+    }
+  };
+
+  // Address search autocomplete
+  const handleAddressSearch = async (query) => {
+    if (query.length < 2) {
+      setAddressSuggestions([]);
+      setShowAddressSuggestions(false);
+      return;
+    }
+
+    try {
+      const response = await priceListApi.searchPriceList(query);
+      setAddressSuggestions(response.data || []);
+      setShowAddressSuggestions(true);
+    } catch (error) {
+      console.error('Error searching addresses:', error);
+      setAddressSuggestions([]);
+      setShowAddressSuggestions(false);
+    }
+  };
+
+  // Handle client selection
+  const handleClientSelect = (client) => {
+    setSelectedClient(client);
+    setFormData(prev => ({
+      ...prev,
+      customer_name: client.business_name,
+      customer_phone: client.phone || '',
+      customer_address: client.address || ''
+    }));
+    setShowClientSuggestions(false);
+  };
+
+  // Handle address selection and price lookup
+  const handleAddressSelect = (address) => {
+    setSelectedAddress(address);
+    setFormData(prev => ({
+      ...prev,
+      customer_address: `${address.area}, ${address.country}`
+    }));
+    setShowAddressSuggestions(false);
+    
+    // Auto-fill delivery fees based on delivery method
+    updateDeliveryFees(address);
+  };
+
+  // Update delivery fees based on selected address and delivery method
+  const updateDeliveryFees = (address) => {
+    if (!address) return;
+
+    const { deliver_method } = formData;
+    const parseMoney = (val, precision = 2) => {
+      if (val === null || val === undefined) return 0;
+      const s = typeof val === 'string' ? val.replace(/,/g, '').trim() : val;
+      const n = Number(s);
+      if (!Number.isFinite(n)) return 0;
+      return precision === 0 ? Math.round(n) : Math.round(n * Math.pow(10, precision)) / Math.pow(10, precision);
+    };
+    const feeUsd = parseMoney(address.fee_usd, 2);
+    const feeLbp = parseMoney(address.fee_lbp, 0);
+    const tpFeeUsd = parseMoney(address.third_party_fee_usd, 2);
+    const tpFeeLbp = parseMoney(address.third_party_fee_lbp, 0);
+    
+    if (deliver_method === 'in_house') {
+      setFormData(prev => ({
+        ...prev,
+        delivery_fees_usd: feeUsd,
+        delivery_fees_lbp: feeLbp,
+        third_party_fee_usd: 0,
+        third_party_fee_lbp: 0
+      }));
+    } else if (deliver_method === 'third_party') {
+      setFormData(prev => ({
+        ...prev,
+        delivery_fees_usd: feeUsd,
+        delivery_fees_lbp: feeLbp,
+        third_party_fee_usd: tpFeeUsd,
+        third_party_fee_lbp: tpFeeLbp
+      }));
+    }
   };
 
   const generateOrderRef = () => {
@@ -211,8 +343,9 @@ const Orders = () => {
       customer_phone: formData.customer_phone || '',
       customer_address: formData.customer_address || '',
       brand_name: formData.brand_name || '',
-      voucher_code: formData.voucher_code || '',
       deliver_method: formData.deliver_method || 'in_house',
+      // Align with backend: explicitly set delivery_mode for third-party vs direct
+      delivery_mode: (formData.deliver_method === 'third_party') ? 'third_party' : 'direct',
       driver_id: formData.driver_id || null,
       notes: formData.notes || '',
       total_usd: parseFloat(formData.total_usd) || 0,
@@ -236,7 +369,6 @@ const Orders = () => {
     setEditingOrder(order);
     setFormData({
       order_ref: order.order_ref || '',
-      voucher_code: order.voucher_code || '',
       brand_name: order.brand_name || '',
       customer_name: order.customer_name || '',
       customer_phone: order.customer_phone || '',
@@ -292,6 +424,21 @@ const Orders = () => {
       ...prev,
       [name]: value
     }));
+
+    // Handle client name search
+    if (name === 'customer_name' && value) {
+      handleClientSearch(value);
+    }
+
+    // Handle address search
+    if (name === 'customer_address' && value) {
+      handleAddressSearch(value);
+    }
+
+    // Handle delivery method change - update fees if address is selected
+    if (name === 'deliver_method' && selectedAddress) {
+      updateDeliveryFees(selectedAddress);
+    }
   };
 
   const getStatusColor = (status) => {
@@ -324,7 +471,7 @@ const Orders = () => {
         currency: 'USD',
       }).format(amount || 0);
     } else if (currency === 'LBP') {
-      return new Intl.NumberFormat('ar-LB', {
+      return new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'LBP',
       }).format(amount || 0);
@@ -422,7 +569,7 @@ const Orders = () => {
         <>
           {/* Search and Filters */}
           <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-8 gap-4">
               <div>
                 <input
                   type="text"
@@ -432,12 +579,24 @@ const Orders = () => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+            <div>
+              <select
+                value={deliveryModeFilter}
+                onChange={(e) => setDeliveryModeFilter(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Delivery</option>
+                <option value="direct">In House</option>
+                <option value="third_party">Third Party</option>
+              </select>
+            </div>
               <div>
                 <select
                   value={selectedStatus}
                   onChange={(e) => setSelectedStatus(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
+                  <option value="!cancelled">All Except Cancelled</option>
                   <option value="">All Statuses</option>
                   <option value="new">New</option>
                   <option value="assigned">Assigned</option>
@@ -448,6 +607,18 @@ const Orders = () => {
                   <option value="cancelled">Cancelled</option>
                 </select>
               </div>
+            <div>
+              <select
+                value={selectedClientCategory}
+                onChange={(e) => setSelectedClientCategory(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Client Categories</option>
+                {clientCategories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
               <div>
                 <select
                   value={selectedBrand}
@@ -455,7 +626,7 @@ const Orders = () => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">All Brands</option>
-                  {clients?.map(client => (
+                {filteredClientsByCategory?.map(client => (
                     <option key={client.id} value={client.business_name}>
                       {client.business_name}
                     </option>
@@ -499,6 +670,7 @@ const Orders = () => {
                   if (selectedStatus) params.set('status', selectedStatus);
                   if (selectedBrand) params.set('brand_name', selectedBrand);
                   if (selectedType) params.set('type', selectedType);
+                  if (deliveryModeFilter) params.set('delivery_mode', deliveryModeFilter);
                   if (dateFrom) params.set('date_from', dateFrom);
                   if (dateTo) params.set('date_to', dateTo);
                   const token = localStorage.getItem('token');
@@ -631,12 +803,14 @@ const Orders = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={() => setShowAddModal(false)}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto"
+              className="bg-white rounded-lg p-4 w-full max-w-4xl max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
             >
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-2xl font-bold">
@@ -650,8 +824,8 @@ const Orders = () => {
                 </button>
               </div>
 
-              <form onSubmit={handleSubmit} className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   {/* Order Reference */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -667,10 +841,10 @@ const Orders = () => {
                     />
                   </div>
 
-                  {/* Brand Name */}
+                  {/* Client */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Brand Name
+                      Client
                     </label>
                     <select
                       name="brand_name"
@@ -678,7 +852,7 @@ const Orders = () => {
                       onChange={handleInputChange}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="">Select Brand</option>
+                      <option value="">Select Client</option>
                       {clients?.map(client => (
                         <option key={client.id} value={client.business_name}>
                           {client.business_name}
@@ -717,7 +891,7 @@ const Orders = () => {
                   </div>
 
                   {/* Customer Address */}
-                  <div className="md:col-span-2">
+                  <div className="md:col-span-3">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Customer Address
                     </label>
@@ -783,24 +957,12 @@ const Orders = () => {
                     </select>
                   </div>
 
-                  {/* Voucher Code */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Voucher Code
-                    </label>
-                    <input
-                      type="text"
-                      name="voucher_code"
-                      value={formData.voucher_code}
-                      onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+                  {/* Voucher Code hidden per requirements */}
 
-                  {/* Total USD */}
+                  {/* Total Amount USD */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Total USD
+                      Total Amount USD
                     </label>
                     <input
                       type="number"
@@ -812,10 +974,10 @@ const Orders = () => {
                     />
                   </div>
 
-                  {/* Total LBP */}
+                  {/* Total Amount LBP */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Total LBP
+                      Total Amount LBP
                     </label>
                     <input
                       type="number"
@@ -826,39 +988,10 @@ const Orders = () => {
                     />
                   </div>
 
-                  {/* Third Party Fee USD */}
+                  {/* Delivery Fee USD */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Third Party Fee USD
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      name="third_party_fee_usd"
-                      value={formData.third_party_fee_usd}
-                      onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  {/* Third Party Fee LBP */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Third Party Fee LBP
-                    </label>
-                    <input
-                      type="number"
-                      name="third_party_fee_lbp"
-                      value={formData.third_party_fee_lbp}
-                      onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  {/* Driver Fee USD */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Driver Fee USD
+                      Delivery Fee USD
                     </label>
                     <input
                       type="number"
@@ -870,10 +1003,10 @@ const Orders = () => {
                     />
                   </div>
 
-                  {/* Driver Fee LBP */}
+                  {/* Delivery Fee LBP */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Driver Fee LBP
+                      Delivery Fee LBP
                     </label>
                     <input
                       type="number"
@@ -883,6 +1016,59 @@ const Orders = () => {
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
+
+                  {/* Third Party specific section - visible only when third party */}
+                  {formData.deliver_method === 'third_party' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Third Party Fee USD</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          name="third_party_fee_usd"
+                          value={formData.third_party_fee_usd}
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Third Party Fee LBP</label>
+                        <input
+                          type="number"
+                          name="third_party_fee_lbp"
+                          value={formData.third_party_fee_lbp}
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Third Party Payment</label>
+                        <select
+                          name="payment_status"
+                          value={formData.payment_status}
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="prepaid">Prepaid</option>
+                          <option value="unpaid">Unpaid</option>
+                          <option value="canceled">Canceled</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Third Party Order Status</label>
+                        <select
+                          name="status"
+                          value={formData.status}
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="on_road">Onroad</option>
+                          <option value="delivered">Delivered</option>
+                          <option value="canceled">Canceled</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
 
                   {/* Status */}
                   <div>

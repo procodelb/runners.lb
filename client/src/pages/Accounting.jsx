@@ -37,6 +37,9 @@ const Accounting = () => {
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState(null);
+  const [entityStatus, setEntityStatus] = useState('');
+  const [showCashoutModal, setShowCashoutModal] = useState(false);
+  const [cashoutData, setCashoutData] = useState({ amount_usd: 0, amount_lbp: 0, description: '' });
 
   const queryClient = useQueryClient();
 
@@ -53,7 +56,8 @@ const Accounting = () => {
         return res.data?.data || [];
       }
       if (selectedView === 'third_parties') {
-        const res = await api.get('/accounting/thirdparties', { params: { from_date: dateRange.from, to_date: dateRange.to, search: searchTerm } });
+        // Backend route is singular: /accounting/thirdparty
+        const res = await api.get('/accounting/thirdparty', { params: { from_date: dateRange.from, to_date: dateRange.to, search: searchTerm } });
         return res.data?.data || [];
       }
       // Fallback to overview endpoint already available
@@ -64,20 +68,21 @@ const Accounting = () => {
   );
 
   // Fetch entity details when selected
-  const { data: entityDetails } = useQuery(
-    ['accounting-entity', selectedView, selectedEntity?.id || selectedEntity?.name, dateRange],
+  const { data: entityDetails, refetch: refetchEntity } = useQuery(
+    ['accounting-entity', selectedView, selectedEntity?.id || selectedEntity?.name, dateRange, entityStatus],
     async () => {
       if (!selectedEntity) return null;
       if (selectedView === 'clients') {
-        const res = await api.get(`/accounting/clients/${selectedEntity.id}`, { params: { from_date: dateRange.from, to_date: dateRange.to } });
+        const res = await api.get(`/accounting/clients/${selectedEntity.id}`, { params: { from_date: dateRange.from, to_date: dateRange.to, status: entityStatus } });
         return res.data?.data;
       }
       if (selectedView === 'drivers') {
-        const res = await api.get(`/accounting/drivers/${selectedEntity.id}`, { params: { from_date: dateRange.from, to_date: dateRange.to } });
+        const res = await api.get(`/accounting/drivers/${selectedEntity.id}`, { params: { from_date: dateRange.from, to_date: dateRange.to, status: entityStatus } });
         return res.data?.data;
       }
       if (selectedView === 'third_parties') {
-        const res = await api.get(`/accounting/thirdparties/${selectedEntity.name}`, { params: { from_date: dateRange.from, to_date: dateRange.to } });
+        // Backend route is singular: /accounting/thirdparty/:name
+        const res = await api.get(`/accounting/thirdparty/${selectedEntity.name}`, { params: { from_date: dateRange.from, to_date: dateRange.to, status: entityStatus } });
         return res.data?.data;
       }
       return null;
@@ -121,16 +126,8 @@ const Accounting = () => {
 
   const downloadStatement = async (actorType, actorId, format = 'csv') => {
     try {
-      let endpoint = '';
-      if (actorType === 'client') {
-        endpoint = `/accounting/clients/${actorId}/export/${format}`;
-      } else if (actorType === 'driver') {
-        endpoint = `/accounting/drivers/${actorId}/export/${format}`;
-      } else if (actorType === 'third_party') {
-        endpoint = `/accounting/thirdparties/${actorId}/export/${format}`;
-      }
-      
-      const response = await api.get(endpoint, {
+      // Use centralized export endpoint already implemented server-side
+      const response = await api.get('/accounting/export', {
         params: { from_date: dateRange.from, to_date: dateRange.to },
         responseType: 'blob'
       });
@@ -162,6 +159,31 @@ const Accounting = () => {
     }
   };
 
+  // Calculate cashout amounts based on entity type and orders
+  const calculateCashoutAmounts = (entityType, orders) => {
+    if (!orders || !Array.isArray(orders)) return { amount_usd: 0, amount_lbp: 0 };
+
+    return orders.reduce((totals, order) => {
+      const calculatedTotals = calculateDisplayedTotals(order);
+      
+      if (entityType === 'clients') {
+        // For clients: full displayed amount goes to cashbox
+        totals.amount_usd += calculatedTotals.displayedTotalUSD;
+        totals.amount_lbp += calculatedTotals.displayedTotalLBP;
+      } else if (entityType === 'drivers') {
+        // For drivers: only driver fee goes to cashbox
+        totals.amount_usd += parseFloat(order.driver_fee_usd || 0);
+        totals.amount_lbp += parseInt(order.driver_fee_lbp || 0);
+      } else if (entityType === 'third_parties') {
+        // For third parties: only driver fee goes to cashbox (your driver fee)
+        totals.amount_usd += parseFloat(order.driver_fee_usd || 0);
+        totals.amount_lbp += parseInt(order.driver_fee_lbp || 0);
+      }
+      
+      return totals;
+    }, { amount_usd: 0, amount_lbp: 0 });
+  };
+
   // Cashout actions
   const cashoutMutation = useMutation(
     async ({ scope, idOrName, amount_usd = 0, amount_lbp = 0, description }) => {
@@ -170,13 +192,18 @@ const Accounting = () => {
       } else if (scope === 'drivers') {
         return api.post(`/accounting/drivers/${idOrName}/cashout`, { amount_usd, amount_lbp, description });
       } else if (scope === 'third_parties') {
-        return api.post(`/accounting/thirdparties/${idOrName}/cashout`, { amount_usd, amount_lbp, description });
+        return api.post(`/accounting/thirdparty/${idOrName}/cashout`, { amount_usd, amount_lbp, description });
       }
     },
     {
-      onSuccess: () => {
-        toast.success('Cashout completed');
+      onSuccess: (_resp, variables) => {
+        toast.success('Cashout completed and moved to Order History');
+        setShowCashoutModal(false);
+        setCashoutData({ amount_usd: 0, amount_lbp: 0, description: '' });
         refetch();
+        queryClient.invalidateQueries(['accounting']);
+        queryClient.invalidateQueries(['orderHistory']);
+        // Optionally refetch OrderHistory related queries if used elsewhere
       },
       onError: (e) => toast.error(e.response?.data?.message || 'Cashout failed')
     }
@@ -230,12 +257,76 @@ const Accounting = () => {
     return Array.isArray(listData) ? listData : [];
   };
 
+  // Calculate displayed totals based on business logic
+  const calculateDisplayedTotals = (order) => {
+    const {
+      total_usd = 0,
+      total_lbp = 0,
+      delivery_fees_usd = 0,
+      delivery_fees_lbp = 0,
+      third_party_fee_usd = 0,
+      third_party_fee_lbp = 0,
+      driver_fee_usd = 0,
+      driver_fee_lbp = 0,
+      deliver_method,
+      order_type
+    } = order;
+
+    let displayedTotalUSD = 0;
+    let displayedTotalLBP = 0;
+    let deliveryFeesDisplayUSD = 0;
+    let deliveryFeesDisplayLBP = 0;
+
+    if (deliver_method === 'in_house') {
+      if (order_type === 'ecommerce' || order_type === 'go-to-market') {
+        // Display order total = base totals
+        displayedTotalUSD = parseFloat(total_usd);
+        displayedTotalLBP = parseInt(total_lbp);
+        // Display delivery fees = only delivery fees (no third party)
+        deliveryFeesDisplayUSD = parseFloat(delivery_fees_usd);
+        deliveryFeesDisplayLBP = parseInt(delivery_fees_lbp);
+      } else if (order_type === 'instant') {
+        // Display order total = total + driver fee
+        displayedTotalUSD = parseFloat(total_usd) + parseFloat(driver_fee_usd);
+        displayedTotalLBP = parseInt(total_lbp) + parseInt(driver_fee_lbp);
+        // Hide delivery fees column for instant orders
+        deliveryFeesDisplayUSD = 0;
+        deliveryFeesDisplayLBP = 0;
+      }
+    } else if (deliver_method === 'third_party') {
+      if (order_type === 'ecommerce' || order_type === 'go-to-market') {
+        // Display order total = total + delivery fees + third party fees
+        displayedTotalUSD = parseFloat(total_usd) + parseFloat(delivery_fees_usd) + parseFloat(third_party_fee_usd);
+        displayedTotalLBP = parseInt(total_lbp) + parseInt(delivery_fees_lbp) + parseInt(third_party_fee_lbp);
+        // Display delivery fees = delivery fees + third party fees
+        deliveryFeesDisplayUSD = parseFloat(delivery_fees_usd) + parseFloat(third_party_fee_usd);
+        deliveryFeesDisplayLBP = parseInt(delivery_fees_lbp) + parseInt(third_party_fee_lbp);
+      } else if (order_type === 'instant') {
+        // Display order total = total + driver fee + third party fees
+        displayedTotalUSD = parseFloat(total_usd) + parseFloat(driver_fee_usd) + parseFloat(third_party_fee_usd);
+        displayedTotalLBP = parseInt(total_lbp) + parseInt(driver_fee_lbp) + parseInt(third_party_fee_lbp);
+        // Hide delivery fees column for instant orders
+        deliveryFeesDisplayUSD = 0;
+        deliveryFeesDisplayLBP = 0;
+      }
+    }
+
+    return {
+      displayedTotalUSD,
+      displayedTotalLBP,
+      deliveryFeesDisplayUSD,
+      deliveryFeesDisplayLBP,
+      showDeliveryFees: order_type !== 'instant'
+    };
+  };
+
   const getTotalAmounts = (items) => {
     // Ensure items is an array before using reduce
     const itemsArray = Array.isArray(items) ? items : [];
     return itemsArray.reduce((acc, item) => {
-      acc.usd += parseFloat(item.total_usd || 0);
-      acc.lbp += parseInt(item.total_lbp || 0);
+      const totals = calculateDisplayedTotals(item);
+      acc.usd += totals.displayedTotalUSD;
+      acc.lbp += totals.displayedTotalLBP;
       return acc;
     }, { usd: 0, lbp: 0 });
   };
@@ -375,8 +466,12 @@ const Accounting = () => {
               entityDetails={entityDetails}
               onViewReceipt={handleViewReceipt}
               onDownloadStatement={downloadStatement}
-              onCashout={(payload) => cashoutMutation.mutate(payload)}
+              onCashout={() => setShowCashoutModal(true)}
               onExportImage={exportSectionAsImage}
+              entityStatus={entityStatus}
+              onChangeEntityStatus={(status) => setEntityStatus(status)}
+              calculateCashoutAmounts={calculateCashoutAmounts}
+              setCashoutData={setCashoutData}
             />
           )}
         </div>
@@ -637,6 +732,92 @@ const Accounting = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Cashout Modal */}
+      <AnimatePresence>
+        {showCashoutModal && selectedEntity && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-lg shadow-xl max-w-md w-full"
+            >
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Cash Out</h3>
+                  <button onClick={() => setShowCashoutModal(false)} className="text-gray-400 hover:text-gray-600">✕</button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Amount (USD)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={cashoutData.amount_usd}
+                      onChange={(e) => setCashoutData({ ...cashoutData, amount_usd: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Amount (LBP)</label>
+                    <input
+                      type="number"
+                      value={cashoutData.amount_lbp}
+                      onChange={(e) => setCashoutData({ ...cashoutData, amount_lbp: parseInt(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="0"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                    <textarea
+                      rows={3}
+                      value={cashoutData.description}
+                      onChange={(e) => setCashoutData({ ...cashoutData, description: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Cashout description..."
+                    />
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowCashoutModal(false)}
+                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const idOrName = selectedView === 'third_parties' ? (selectedEntity?.name || '') : (selectedEntity?.id || '');
+                        if (!idOrName) return;
+                        cashoutMutation.mutate({
+                          scope: selectedView,
+                          idOrName,
+                          amount_usd: cashoutData.amount_usd,
+                          amount_lbp: cashoutData.amount_lbp,
+                          description: cashoutData.description,
+                        });
+                      }}
+                      disabled={cashoutMutation.isLoading}
+                      className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                    >
+                      {cashoutMutation.isLoading ? 'Processing...' : 'Cash Out'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -745,7 +926,7 @@ const OverviewView = ({ data, totalAmounts }) => {
 };
 
 // Entity List Component
-const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, entityDetails, onViewReceipt, onDownloadStatement, onCashout, onExportImage }) => {
+const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, entityDetails, onViewReceipt, onDownloadStatement, onCashout, onExportImage, entityStatus, onChangeEntityStatus, calculateCashoutAmounts, setCashoutData }) => {
   const getEntityIcon = (type) => {
     switch (type) {
       case 'clients': return Users;
@@ -770,12 +951,20 @@ const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, entity
   const sectionRef = useRef(null);
 
   const handleCashout = () => {
-    if (!selectedEntity) return;
-    const amount_usd = parseFloat(prompt('Enter cashout amount in USD (0 if none):', '0')) || 0;
-    const amount_lbp = parseInt(prompt('Enter cashout amount in LBP (0 if none):', '0')) || 0;
-    const description = prompt('Optional description:', 'Cashout');
-    const idOrName = viewType === 'third_parties' ? selectedEntity.name : selectedEntity.id;
-    onCashout({ scope: viewType, idOrName, amount_usd, amount_lbp, description });
+    if (!selectedEntity || !entityDetails?.orders) return;
+    
+    // Calculate cashout amounts based on entity type and orders
+    const calculatedAmounts = calculateCashoutAmounts(viewType, entityDetails.orders);
+    
+    // Pre-fill the cashout modal with calculated amounts
+    setCashoutData({
+      amount_usd: calculatedAmounts.amount_usd,
+      amount_lbp: calculatedAmounts.amount_lbp,
+      description: `Cashout for ${selectedEntity.name || selectedEntity.business_name}`
+    });
+    
+    // Show the cashout modal
+    onCashout();
   };
 
   return (
@@ -783,48 +972,62 @@ const EntityListView = ({ data, viewType, onEntitySelect, selectedEntity, entity
       {/* Entity List */}
       <div className="lg:col-span-1">
         <h3 className="text-lg font-semibold mb-4">{entityTitle}s</h3>
-        <div className="space-y-2 max-h-96 overflow-y-auto">
-          {data.map((entity) => (
-            <motion.button
-              key={entity.id}
-              onClick={() => onEntitySelect(entity)}
-              className={`w-full p-4 text-left rounded-lg border transition-colors ${
-                selectedEntity?.id === entity.id
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                  <Icon className="w-5 h-5 text-blue-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-gray-900 truncate">
-                    {entity.business_name || entity.full_name || entity.name}
-                  </p>
-                  <p className="text-sm text-gray-500 truncate">
-                    {entity.contact_person || entity.phone || entity.address}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-2 text-right">
-                <p className="text-sm font-medium text-gray-900">
-                  {formatCurrency(entity.total_usd || 0, 'USD')}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {formatCurrency(entity.total_lbp || 0, 'LBP')}
-                </p>
-              </div>
-            </motion.button>
-          ))}
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Orders</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {data.map((entity) => (
+                  <tr
+                    key={entity.id || entity.name}
+                    className={`cursor-pointer hover:bg-gray-50 ${selectedEntity?.id === entity.id || selectedEntity?.name === entity.name ? 'bg-blue-50' : ''}`}
+                    onClick={() => onEntitySelect(entity)}
+                  >
+                    <td className="px-3 py-2 text-sm text-gray-900">
+                      {entity.business_name || entity.full_name || entity.name}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-gray-500">
+                      {entity.contact_person || entity.phone || entity.address || '—'}
+                    </td>
+                    <td className="px-3 py-2 text-sm text-gray-900 text-right">
+                      {entity.total_orders || entity.orders_count || 0}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
       {/* Transactions */}
       <div className="lg:col-span-2" ref={sectionRef}>
-        <h3 className="text-lg font-semibold mb-4">
-          {selectedEntity ? `${entityTitle} Transactions` : 'All Transactions'}
-        </h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-semibold">
+            {selectedEntity ? `${entityTitle} Transactions` : 'All Transactions'}
+          </h3>
+          <div className="flex items-center gap-2">
+            <select
+              value={entityStatus}
+              onChange={(e) => onChangeEntityStatus(e.target.value)}
+              className="px-2 py-1 border border-gray-300 rounded text-sm"
+            >
+              <option value="">All Status</option>
+              <option value="onshelf">On Shelf</option>
+              <option value="on_road">On Road</option>
+              <option value="delivered">Delivered</option>
+              <option value="postponed">Postponed</option>
+              <option value="canceled">Canceled</option>
+              <option value="completed">Completed</option>
+            </select>
+          </div>
+        </div>
         {selectedEntity ? (
           <div className="space-y-3">
             <div className="flex justify-end gap-2 mb-2">

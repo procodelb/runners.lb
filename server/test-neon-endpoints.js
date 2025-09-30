@@ -109,6 +109,31 @@ async function testOrders() {
       console.log(`❌ ${endpoint} - Failed`);
     }
   }
+
+  // Batch create two orders and complete one
+  console.log('➕ Creating batch orders...');
+  const batch = await makeAuthRequest('POST', '/orders/batch', {
+    orders: [
+      { brand_name: 'Test Client A', customer: 'Alice', customer_phone: '70000001', customer_address: 'Addr 1', delivery_mode: 'direct', fee_lbp: 200000, notes: 'A' },
+      { brand_name: 'Test Client B', customer: 'Bob', customer_phone: '70000002', customer_address: 'Addr 2', delivery_mode: 'third_party', third_party_fee_lbp: 100000, fee_lbp: 250000, notes: 'B' }
+    ]
+  });
+  if (!batch || !batch.success) {
+    console.log('❌ /orders/batch - Failed');
+  } else {
+    console.log('✅ /orders/batch - OK');
+    const created = batch.data || [];
+    if (created.length >= 2) {
+      const ord = created[1];
+      console.log('🚚 Completing order', ord.id);
+      const complete = await makeAuthRequest('POST', `/orders/${ord.id}/complete`, { status: 'completed', payment_status: 'paid' });
+      if (complete && complete.success) {
+        console.log('✅ /orders/:id/complete - OK');
+      } else {
+        console.log('❌ /orders/:id/complete - Failed');
+      }
+    }
+  }
 }
 
 // Test Drivers endpoints

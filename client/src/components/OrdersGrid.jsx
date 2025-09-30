@@ -35,9 +35,10 @@ import toast from 'react-hot-toast';
 
 const OrdersGrid = () => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('!cancelled');
   const [selectedBrand, setSelectedBrand] = useState('');
   const [selectedType, setSelectedType] = useState('');
+  const [selectedDeliveryMode, setSelectedDeliveryMode] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [selectedRows, setSelectedRows] = useState(new Set());
@@ -46,13 +47,14 @@ const OrdersGrid = () => {
   const [clientSuggestions, setClientSuggestions] = useState([]);
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [suggestionIndex, setSuggestionIndex] = useState(-1);
+  const [activeSuggestionField, setActiveSuggestionField] = useState('client');
 
   const queryClient = useQueryClient();
 
   // Fetch orders with search and filters
   const { data: orders, isLoading } = useQuery(
-    ['orders', searchTerm, selectedStatus, selectedBrand, selectedType, dateFrom, dateTo],
-    () => api.get(`/orders?search=${encodeURIComponent(searchTerm)}&status=${selectedStatus}&brand_name=${encodeURIComponent(selectedBrand)}&type=${selectedType}` + (dateFrom ? `&date_from=${dateFrom}` : '') + (dateTo ? `&date_to=${dateTo}` : '')), 
+    ['orders', searchTerm, selectedStatus, selectedBrand, selectedType, selectedDeliveryMode, dateFrom, dateTo],
+    () => api.get(`/orders?search=${encodeURIComponent(searchTerm)}&status=${encodeURIComponent(selectedStatus)}` + `&brand_name=${encodeURIComponent(selectedBrand)}&type=${selectedType}` + (selectedDeliveryMode ? `&delivery_mode=${selectedDeliveryMode}` : '') + (dateFrom ? `&date_from=${dateFrom}` : '') + (dateTo ? `&date_to=${dateTo}` : '')), 
     {
       keepPreviousData: true,
       select: (response) => response.data?.data || []
@@ -63,6 +65,35 @@ const OrdersGrid = () => {
   const { data: drivers } = useQuery('drivers', () => api.get('/drivers'), {
     select: (response) => response.data?.data || []
   });
+
+  // Delete existing order
+  const deleteOrderMutation = useMutation(
+    (id) => api.delete(`/orders/${id}`),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries('orders');
+        toast.success('Order deleted successfully!');
+      },
+      onError: (error) => {
+        toast.error(error.response?.data?.message || 'Failed to delete order');
+      }
+    }
+  );
+
+  // Update existing order (minimal editable fields)
+  const updateOrderMutation = useMutation(
+    ({ id, data }) => api.put(`/orders/${id}`, data),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries('orders');
+        setEditingRow(null);
+        toast.success('Order updated');
+      },
+      onError: (error) => {
+        toast.error(error.response?.data?.message || 'Failed to update order');
+      }
+    }
+  );
 
   // Batch create orders mutation
   const batchCreateMutation = useMutation(
@@ -83,7 +114,7 @@ const OrdersGrid = () => {
 
   // Batch assign driver mutation
   const batchAssignMutation = useMutation(
-    ({ orderIds, driverId }) => api.patch('/orders/batch/assign', { order_ids: orderIds, driver_id: driverId }),
+    ({ orderIds, driverId }) => api.patch('/orders/assign', { order_ids: orderIds, driver_id: driverId }),
     {
       onSuccess: (response) => {
         queryClient.invalidateQueries('orders');
@@ -98,9 +129,9 @@ const OrdersGrid = () => {
     }
   );
 
-  // Client search mutation
+  // Client search mutation (unified /clients endpoint)
   const clientSearchMutation = useMutation(
-    (query) => api.get(`/orders/clients/search?q=${encodeURIComponent(query)}`),
+    (query) => api.get('/clients', { params: { search: query } }),
     {
       onSuccess: (response) => {
         setClientSuggestions(response.data.data || []);
@@ -117,22 +148,26 @@ const OrdersGrid = () => {
   const addNewRow = () => {
     const newRow = {
       id: `new-${Date.now()}`,
-      order_ref: '',
-      brand_name: '',
-      customer_name: '',
-      customer_phone: '',
-      location_text: '',
+      client: '',
+      phone: '',
+      customer: '',
+      address: '',
       google_maps_url: '',
       latitude: '',
       longitude: '',
       price_usd: '',
       price_lbp: '',
-      fee_usd: '',
-      fee_lbp: '',
-      delivery_type: 'direct',
-      delivery_mode: 'in_house',
+      delivery_fees_usd: '',
+      delivery_fees_lbp: '',
+      order_type: 'ecommerce',
+      delivery_mode: 'direct',
       third_party_id: '',
-      prepaid_status: 'unpaid',
+      third_party_fee_usd: '',
+      third_party_fee_lbp: '',
+      driver_id: '',
+      payment_status: 'unpaid',
+      order_status: 'new',
+      note: '',
       isNew: true
     };
     setNewRows(prev => [...prev, newRow]);
@@ -154,11 +189,25 @@ const OrdersGrid = () => {
 
   // Handle client name change with autocomplete
   const handleClientNameChange = (rowId, value) => {
-    updateRowData(rowId, 'customer_name', value);
+    updateRowData(rowId, 'client', value);
     
     if (value.length >= 2) {
       clientSearchMutation.mutate(value);
       setSuggestionIndex(rowId);
+      setActiveSuggestionField('client');
+    } else {
+      setShowClientSuggestions(false);
+    }
+  };
+
+  // Handle phone change with autocomplete
+  const handlePhoneChange = (rowId, value) => {
+    updateRowData(rowId, 'phone', value);
+    const digits = (value || '').replace(/\D+/g, '');
+    if (digits.length >= 5) {
+      clientSearchMutation.mutate(value);
+      setSuggestionIndex(rowId);
+      setActiveSuggestionField('phone');
     } else {
       setShowClientSuggestions(false);
     }
@@ -166,9 +215,27 @@ const OrdersGrid = () => {
 
   // Select client from suggestions
   const selectClient = (rowId, client) => {
-    updateRowData(rowId, 'customer_name', client.business_name);
-    updateRowData(rowId, 'customer_phone', client.phone);
-    updateRowData(rowId, 'location_text', client.address);
+    updateRowData(rowId, 'client', client.business_name || client.name || '');
+    updateRowData(rowId, 'phone', client.phone || '');
+    updateRowData(rowId, 'address', client.address || client.location || '');
+    if (client.default_delivery_fee_usd) updateRowData(rowId, 'delivery_fees_usd', String(client.default_delivery_fee_usd));
+    if (client.default_delivery_fee_lbp) updateRowData(rowId, 'delivery_fees_lbp', String(client.default_delivery_fee_lbp));
+    // Autofill google map link/coordinates if available
+    if (client.google_location) {
+      const loc = String(client.google_location);
+      if (/^https?:\/\//i.test(loc)) {
+        updateRowData(rowId, 'google_maps_url', loc);
+        const coords = parseGoogleMapsUrl(loc);
+        if (coords) {
+          updateRowData(rowId, 'latitude', coords.latitude.toString());
+          updateRowData(rowId, 'longitude', coords.longitude.toString());
+        }
+      } else if (/^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(loc)) {
+        const [lat, lng] = loc.split(',').map(s => s.trim());
+        updateRowData(rowId, 'latitude', lat);
+        updateRowData(rowId, 'longitude', lng);
+      }
+    }
     setShowClientSuggestions(false);
   };
 
@@ -196,8 +263,10 @@ const OrdersGrid = () => {
 
   // Submit new rows
   const submitNewRows = () => {
-    const validRows = newRows.filter(row => 
-      row.customer_name && (row.price_usd || row.price_lbp)
+    const targetRows = newRows.filter(r => selectedRows.has(r.id));
+    const rowsToSubmit = targetRows.length > 0 ? targetRows : newRows;
+    const validRows = rowsToSubmit.filter(row => 
+      row.client && row.customer && (row.price_usd || row.price_lbp)
     );
 
     if (validRows.length === 0) {
@@ -206,20 +275,25 @@ const OrdersGrid = () => {
     }
 
     const ordersData = validRows.map(row => ({
-      customer_name: row.customer_name,
-      customer_phone: row.customer_phone,
-      location_text: row.location_text,
+      brand_name: row.client,
+      customer_name: row.customer,
+      customer_phone: row.phone,
+      customer_address: row.address,
       latitude: row.latitude ? parseFloat(row.latitude) : null,
       longitude: row.longitude ? parseFloat(row.longitude) : null,
       total_usd: parseFloat(row.price_usd) || 0,
       total_lbp: parseInt(row.price_lbp) || 0,
-      delivery_fee_usd: parseFloat(row.fee_usd) || 0,
-      delivery_fee_lbp: parseInt(row.fee_lbp) || 0,
+      delivery_fee_usd: parseFloat(row.delivery_fees_usd) || 0,
+      delivery_fee_lbp: parseInt(row.delivery_fees_lbp) || 0,
+      type: row.order_type,
       delivery_mode: row.delivery_mode,
-      third_party_id: row.third_party_id || null,
-      prepaid_status: row.prepaid_status,
-      status: 'new',
-      payment_status: 'unpaid'
+      third_party_id: row.delivery_mode === 'third_party' ? (row.third_party_id || null) : null,
+      third_party_fee_usd: row.delivery_mode === 'third_party' ? (parseFloat(row.third_party_fee_usd) || 0) : 0,
+      third_party_fee_lbp: row.delivery_mode === 'third_party' ? (parseInt(row.third_party_fee_lbp) || 0) : 0,
+      driver_id: row.driver_id ? parseInt(row.driver_id) : null,
+      payment_status: row.payment_status,
+      status: row.order_status,
+      notes: row.note || ''
     }));
 
     batchCreateMutation.mutate(ordersData);
@@ -292,7 +366,7 @@ const OrdersGrid = () => {
   // Generate Google Maps link
   const generateGoogleMapsLink = (latitude, longitude) => {
     if (latitude && longitude) {
-      return `https://www.google.com/maps?q=${latitude},${longitude}`;
+      return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
     }
     return null;
   };
@@ -304,7 +378,7 @@ const OrdersGrid = () => {
         currency: 'USD',
       }).format(amount || 0);
     } else if (currency === 'LBP') {
-      return new Intl.NumberFormat('ar-LB', {
+      return new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'LBP',
       }).format(amount || 0);
@@ -346,60 +420,66 @@ const OrdersGrid = () => {
   const allRows = [...(orders || []), ...newRows];
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="container mx-auto px-2 py-4">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Orders Grid</h1>
-        <div className="flex items-center space-x-3">
+        <h1 className="text-2xl font-bold text-gray-900">Orders Grid</h1>
+        <div className="flex items-center space-x-2">
           <button
             onClick={addNewRow}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+            className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-md flex items-center gap-2 transition-colors text-sm"
           >
             <Plus className="w-5 h-5" />
             Add Row
           </button>
-          {selectedRows.size > 0 && (
-            <div className="flex items-center space-x-2">
-              <select
-                onChange={(e) => batchAssignDriver(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                defaultValue=""
-              >
-                <option value="">Assign Driver to Selected</option>
-                {drivers?.map(driver => (
-                  <option key={driver.id} value={driver.id}>
-                    {driver.full_name}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={deselectAllRows}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
+          <div className="flex items-center space-x-2">
+            <select
+              onChange={(e) => e.target.value && batchAssignDriver(e.target.value)}
+              className="px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              defaultValue=""
+            >
+              <option value="">Assign driver…</option>
+              {drivers?.map(driver => (
+                <option key={driver.id} value={driver.id}>
+                  {driver.full_name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => (selectedRows.size === allRows.length ? deselectAllRows() : selectAllRows())}
+              className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+            >
+              {selectedRows.size === allRows.length ? 'Deselect All' : 'Select All'}
+            </button>
+            <button
+              onClick={submitNewRows}
+              disabled={batchCreateMutation.isLoading}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-md text-sm disabled:opacity-50"
+            >
+              Submit Selected
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Search and Filters */}
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+      <div className="bg-white rounded-lg shadow-md p-3 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
           <div>
             <input
               type="text"
               placeholder="Search orders..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
           <div>
             <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
+              <option value="!cancelled">All Except Cancelled</option>
               <option value="">All Statuses</option>
               <option value="new">New</option>
               <option value="assigned">Assigned</option>
@@ -414,7 +494,7 @@ const OrdersGrid = () => {
             <select
               value={selectedBrand}
               onChange={(e) => setSelectedBrand(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
               <option value="">All Brands</option>
               {/* Add brand options here */}
@@ -424,7 +504,7 @@ const OrdersGrid = () => {
             <select
               value={selectedType}
               onChange={(e) => setSelectedType(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
               <option value="">All Types</option>
               <option value="ecommerce">E-commerce</option>
@@ -433,11 +513,22 @@ const OrdersGrid = () => {
             </select>
           </div>
           <div>
+            <select
+              value={selectedDeliveryMode}
+              onChange={(e) => setSelectedDeliveryMode(e.target.value)}
+              className="w-full px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            >
+              <option value="">All Delivery</option>
+              <option value="direct">In House</option>
+              <option value="third_party">Third Party</option>
+            </select>
+          </div>
+          <div>
             <input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
           <div>
@@ -445,7 +536,7 @@ const OrdersGrid = () => {
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
         </div>
@@ -457,7 +548,7 @@ const OrdersGrid = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-8">
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-8">
                   <button
                     onClick={selectedRows.size === allRows.length ? deselectAllRows : selectAllRows}
                     className="text-gray-400 hover:text-gray-600"
@@ -469,51 +560,30 @@ const OrdersGrid = () => {
                     )}
                   </button>
                 </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Brand
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Client
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Phone
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Location
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Google Maps
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Price USD
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Price LBP
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Fee USD
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Fee LBP
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Delivery
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Prepaid
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Client</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Address</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price USD</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price LBP</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Delivery Fees USD</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Delivery Fees LBP</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order Type</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Delivery Mode</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">3rd Party</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">3rd Fee USD</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">3rd Fee LBP</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Driver</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Note</th>
+                <th className="px-1 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {allRows.map((row) => (
                 <tr key={row.id} className={`hover:bg-gray-50 ${row.isNew ? 'bg-green-50' : ''}`}>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     <button
                       onClick={() => toggleRowSelection(row.id)}
                       className="text-gray-400 hover:text-gray-600"
@@ -525,38 +595,25 @@ const OrdersGrid = () => {
                       )}
                     </button>
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
-                    {row.isNew ? (
-                      <input
-                        type="text"
-                        value={row.brand_name}
-                        onChange={(e) => updateRowData(row.id, 'brand_name', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        placeholder="Brand"
-                      />
-                    ) : (
-                      <div className="text-sm text-gray-900">{row.brand_name}</div>
-                    )}
-                  </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
                       <div className="relative">
                         <input
                           type="text"
-                          value={row.customer_name}
+                          value={row.client}
                           onChange={(e) => handleClientNameChange(row.id, e.target.value)}
-                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          placeholder="Client Name"
+                          className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="Client"
                         />
-                        {showClientSuggestions && suggestionIndex === row.id && clientSuggestions.length > 0 && (
+                        {showClientSuggestions && suggestionIndex === row.id && activeSuggestionField === 'client' && clientSuggestions.length > 0 && (
                           <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-40 overflow-y-auto">
                             {clientSuggestions.map((client, index) => (
                               <div
                                 key={client.id}
                                 onClick={() => selectClient(row.id, client)}
-                                className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
+                                className="px-2 py-1 hover:bg-gray-100 cursor-pointer text-xs"
                               >
-                                <div className="font-medium">{client.business_name}</div>
+                                <div className="font-medium">{client.business_name || client.name}</div>
                                 <div className="text-gray-500">{client.phone}</div>
                               </div>
                             ))}
@@ -564,166 +621,350 @@ const OrdersGrid = () => {
                         )}
                       </div>
                     ) : (
-                      <div className="text-sm text-gray-900">{row.customer_name}</div>
+                      <div className="text-xs text-gray-900">{row.brand_name}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
-                      <input
-                        type="tel"
-                        value={row.customer_phone}
-                        onChange={(e) => updateRowData(row.id, 'customer_phone', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        placeholder="Phone"
-                      />
+                      <div className="relative">
+                        <input
+                          type="tel"
+                          value={row.phone}
+                          onChange={(e) => handlePhoneChange(row.id, e.target.value)}
+                          className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="Phone"
+                        />
+                        {showClientSuggestions && suggestionIndex === row.id && activeSuggestionField === 'phone' && clientSuggestions.length > 0 && (
+                          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-40 overflow-y-auto">
+                            {clientSuggestions.map((client) => (
+                              <div
+                                key={client.id}
+                                onClick={() => selectClient(row.id, client)}
+                                className="px-2 py-1 hover:bg-gray-100 cursor-pointer text-xs"
+                              >
+                                <div className="font-medium">{client.phone}</div>
+                                <div className="text-gray-500">{client.business_name || client.name}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     ) : (
-                      <div className="text-sm text-gray-900">{row.customer_phone}</div>
+                      <div className="text-xs text-gray-900">{row.customer_phone}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
                       <input
                         type="text"
-                        value={row.location_text}
-                        onChange={(e) => updateRowData(row.id, 'location_text', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        placeholder="Location"
+                        value={row.customer}
+                        onChange={(e) => updateRowData(row.id, 'customer', e.target.value)}
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="Customer full name"
                       />
                     ) : (
-                      <div className="text-sm text-gray-900">
-                        {row.location_text}
-                        {row.latitude && row.longitude && (
-                          <a
-                            href={generateGoogleMapsLink(row.latitude, row.longitude)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="ml-2 text-blue-600 hover:text-blue-800"
-                          >
-                            <Map className="w-4 h-4 inline" />
-                          </a>
-                        )}
-                      </div>
+                      <div className="text-xs text-gray-900">{row.customer_name}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
                       <input
-                        type="url"
-                        value={row.google_maps_url}
-                        onChange={(e) => handleGoogleMapsUrlChange(row.id, e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        placeholder="Paste Google Maps URL"
+                        type="text"
+                        value={row.address}
+                        onChange={(e) => updateRowData(row.id, 'address', e.target.value)}
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="Address"
                       />
                     ) : (
-                      <div className="text-sm text-gray-900">
-                        {row.latitude && row.longitude ? (
-                          <a
-                            href={generateGoogleMapsLink(row.latitude, row.longitude)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                          >
-                            <Map className="w-4 h-4" />
-                            View Map
-                          </a>
-                        ) : (
-                          <span className="text-gray-400">No coordinates</span>
-                        )}
-                      </div>
+                      editingRow === row.id ? (
+                        <input
+                          type="text"
+                          defaultValue={row.customer_address}
+                          onBlur={(e) => updateOrderMutation.mutate({ id: row.id, data: { customer_address: e.target.value } })}
+                          className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      ) : (
+                        <div className="text-xs text-gray-900">{row.customer_address}</div>
+                      )
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
                       <input
                         type="number"
                         step="0.01"
                         value={row.price_usd}
                         onChange={(e) => updateRowData(row.id, 'price_usd', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                         placeholder="0.00"
                       />
                     ) : (
-                      <div className="text-sm text-gray-900">{formatCurrency(row.total_usd, 'USD')}</div>
+                      <div className="text-xs text-gray-900">{formatCurrency(row.total_usd, 'USD')}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
                       <input
                         type="number"
                         value={row.price_lbp}
                         onChange={(e) => updateRowData(row.id, 'price_lbp', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                         placeholder="0"
                       />
                     ) : (
-                      <div className="text-sm text-gray-900">{formatCurrency(row.total_lbp, 'LBP')}</div>
+                      <div className="text-xs text-gray-900">{formatCurrency(row.total_lbp, 'LBP')}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
                       <input
                         type="number"
                         step="0.01"
-                        value={row.fee_usd}
-                        onChange={(e) => updateRowData(row.id, 'fee_usd', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={row.delivery_fees_usd}
+                        onChange={(e) => updateRowData(row.id, 'delivery_fees_usd', e.target.value)}
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                         placeholder="0.00"
                       />
                     ) : (
-                      <div className="text-sm text-gray-900">{formatCurrency(row.delivery_fee_usd, 'USD')}</div>
+                      <div className="text-xs text-gray-900">{formatCurrency(row.delivery_fee_usd, 'USD')}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
                       <input
                         type="number"
-                        value={row.fee_lbp}
-                        onChange={(e) => updateRowData(row.id, 'fee_lbp', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={row.delivery_fees_lbp}
+                        onChange={(e) => updateRowData(row.id, 'delivery_fees_lbp', e.target.value)}
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                         placeholder="0"
                       />
                     ) : (
-                      <div className="text-sm text-gray-900">{formatCurrency(row.delivery_fee_lbp, 'LBP')}</div>
+                      <div className="text-xs text-gray-900">{formatCurrency(row.delivery_fee_lbp, 'LBP')}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
+                    {row.isNew ? (
+                      <select
+                        value={row.order_type}
+                        onChange={(e) => updateRowData(row.id, 'order_type', e.target.value)}
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="ecommerce">ecommerce</option>
+                        <option value="instant">instant</option>
+                        <option value="go_to_market">go_to_market</option>
+                      </select>
+                    ) : (
+                      <div className="text-xs text-gray-900">{row.type}</div>
+                    )}
+                  </td>
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
                       <select
                         value={row.delivery_mode}
                         onChange={(e) => updateRowData(row.id, 'delivery_mode', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                       >
-                        <option value="in_house">In House</option>
-                        <option value="third_party">Third Party</option>
+                        <option value="direct">direct</option>
+                        <option value="third_party">third_party</option>
                       </select>
                     ) : (
-                      <div className="text-sm text-gray-900">{row.delivery_mode}</div>
+                      <div className="text-xs text-gray-900">{row.delivery_mode}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  {/* Third party fields - conditionally visible */}
+                  <td className="px-1 py-1 whitespace-nowrap">
+                    {row.isNew ? (
+                      row.delivery_mode === 'third_party' ? (
+                        <input
+                          type="text"
+                          value={row.third_party_id}
+                          onChange={(e) => updateRowData(row.id, 'third_party_id', e.target.value)}
+                          className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="3rd party id"
+                        />
+                      ) : (
+                        <div className="text-gray-400 text-xs">—</div>
+                      )
+                    ) : (
+                      row.delivery_mode === 'third_party' ? (
+                        editingRow === row.id ? (
+                          <input
+                            type="text"
+                            defaultValue={row.third_party_id || ''}
+                            onBlur={(e) => updateOrderMutation.mutate({ id: row.id, data: { third_party_id: e.target.value } })}
+                            className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <div className="text-xs text-gray-900">{row.third_party_id || '—'}</div>
+                        )
+                      ) : (
+                        <div className="text-gray-400 text-xs">—</div>
+                      )
+                    )}
+                  </td>
+                  <td className="px-1 py-1 whitespace-nowrap">
+                    {row.isNew ? (
+                      row.delivery_mode === 'third_party' ? (
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={row.third_party_fee_usd}
+                          onChange={(e) => updateRowData(row.id, 'third_party_fee_usd', e.target.value)}
+                          className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="0.00"
+                        />
+                      ) : (
+                        <div className="text-gray-400 text-xs">—</div>
+                      )
+                    ) : (
+                      row.delivery_mode === 'third_party' ? (
+                        editingRow === row.id ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            defaultValue={row.third_party_fee_usd || 0}
+                            onBlur={(e) => updateOrderMutation.mutate({ id: row.id, data: { third_party_fee_usd: parseFloat(e.target.value) || 0 } })}
+                            className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <div className="text-xs text-gray-900">{formatCurrency(row.third_party_fee_usd, 'USD')}</div>
+                        )
+                      ) : (
+                        <div className="text-gray-400 text-xs">—</div>
+                      )
+                    )}
+                  </td>
+                  <td className="px-1 py-1 whitespace-nowrap">
+                    {row.isNew ? (
+                      row.delivery_mode === 'third_party' ? (
+                        <input
+                          type="number"
+                          value={row.third_party_fee_lbp}
+                          onChange={(e) => updateRowData(row.id, 'third_party_fee_lbp', e.target.value)}
+                          className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="0"
+                        />
+                      ) : (
+                        <div className="text-gray-400 text-xs">—</div>
+                      )
+                    ) : (
+                      row.delivery_mode === 'third_party' ? (
+                        editingRow === row.id ? (
+                          <input
+                            type="number"
+                            defaultValue={row.third_party_fee_lbp || 0}
+                            onBlur={(e) => updateOrderMutation.mutate({ id: row.id, data: { third_party_fee_lbp: parseInt(e.target.value) || 0 } })}
+                            className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <div className="text-xs text-gray-900">{formatCurrency(row.third_party_fee_lbp, 'LBP')}</div>
+                        )
+                      ) : (
+                        <div className="text-gray-400 text-xs">—</div>
+                      )
+                    )}
+                  </td>
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
                       <select
-                        value={row.prepaid_status}
-                        onChange={(e) => updateRowData(row.id, 'prepaid_status', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={row.driver_id}
+                        onChange={(e) => updateRowData(row.id, 'driver_id', e.target.value)}
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                       >
-                        <option value="unpaid">Unpaid</option>
-                        <option value="paid">Paid</option>
+                        <option value="">—</option>
+                        {drivers?.map(driver => (
+                          <option key={driver.id} value={driver.id}>{driver.full_name}</option>
+                        ))}
                       </select>
                     ) : (
-                      <div className="text-sm text-gray-900">{row.prepaid_status}</div>
+                      <div className="text-xs text-gray-900">{row.driver_name || '—'}</div>
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="px-1 py-1 whitespace-nowrap">
                     {row.isNew ? (
-                      <div className="text-sm text-green-600 font-medium">New</div>
+                      row.delivery_mode === 'third_party' ? (
+                        <select
+                          value={row.payment_status}
+                          onChange={(e) => updateRowData(row.id, 'payment_status', e.target.value)}
+                          className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                          <option value="prepaid">prepaid</option>
+                          <option value="paid">paid</option>
+                          <option value="unpaid">unpaid</option>
+                        </select>
+                      ) : (
+                        <div className="text-gray-400 text-xs">—</div>
+                      )
                     ) : (
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(row.status)}`}>
-                        {row.status}
-                      </span>
+                      row.delivery_mode === 'third_party' ? (
+                        editingRow === row.id ? (
+                          <select
+                            defaultValue={row.payment_status}
+                            onBlur={(e) => updateOrderMutation.mutate({ id: row.id, data: { payment_status: e.target.value } })}
+                            className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          >
+                            <option value="prepaid">prepaid</option>
+                            <option value="paid">paid</option>
+                            <option value="unpaid">unpaid</option>
+                          </select>
+                        ) : (
+                          <div className="text-xs text-gray-900">{row.payment_status}</div>
+                        )
+                      ) : (
+                        <div className="text-gray-400 text-xs">—</div>
+                      )
                     )}
                   </td>
-                  <td className="px-2 py-2 whitespace-nowrap text-sm font-medium">
+                  <td className="px-1 py-1 whitespace-nowrap">
+                    {row.isNew ? (
+                      <select
+                        value={row.order_status}
+                        onChange={(e) => updateRowData(row.id, 'order_status', e.target.value)}
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="onshelf">onshelf</option>
+                        <option value="on_road">on_road</option>
+                        <option value="delivered">delivered</option>
+                        <option value="canceled">canceled</option>
+                        <option value="postponed">postponed</option>
+                        <option value="completed">completed</option>
+                      </select>
+                    ) : (
+                      editingRow === row.id ? (
+                        <select
+                          defaultValue={row.status}
+                          onBlur={(e) => updateOrderMutation.mutate({ id: row.id, data: { status: e.target.value } })}
+                          className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                          <option value="new">new</option>
+                          <option value="assigned">assigned</option>
+                          <option value="picked_up">picked_up</option>
+                          <option value="in_transit">in_transit</option>
+                          <option value="delivered">delivered</option>
+                          <option value="completed">completed</option>
+                          <option value="cancelled">cancelled</option>
+                        </select>
+                      ) : (
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(row.status)}`}>
+                          {row.status}
+                        </span>
+                      )
+                    )}
+                  </td>
+                  <td className="px-1 py-1 whitespace-nowrap">
+                    {row.isNew ? (
+                      <input
+                        type="text"
+                        value={row.note}
+                        onChange={(e) => updateRowData(row.id, 'note', e.target.value)}
+                        className="w-full px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="Note"
+                      />
+                    ) : (
+                      <div className="text-xs text-gray-900">{row.notes || ''}</div>
+                    )}
+                  </td>
+                  <td className="px-1 py-1 whitespace-nowrap text-xs font-medium">
                     {row.isNew ? (
                       <button
                         onClick={() => removeNewRow(row.id)}
@@ -734,13 +975,15 @@ const OrdersGrid = () => {
                     ) : (
                       <div className="flex space-x-2">
                         <button
-                          onClick={() => {/* Edit functionality */}}
+                          onClick={() => setEditingRow(editingRow === row.id ? null : row.id)}
                           className="text-indigo-600 hover:text-indigo-900"
                         >
                           <Edit className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => {/* Delete functionality */}}
+                          onClick={() => {
+                            if (window.confirm('Delete this order?')) deleteOrderMutation.mutate(row.id);
+                          }}
                           className="text-red-600 hover:text-red-900"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -757,16 +1000,16 @@ const OrdersGrid = () => {
 
       {/* Submit Button for New Rows */}
       {newRows.length > 0 && (
-        <div className="mt-6 flex justify-end">
+        <div className="mt-3 flex justify-end">
           <button
             onClick={submitNewRows}
             disabled={batchCreateMutation.isLoading}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-md flex items-center gap-2 transition-colors disabled:opacity-50 text-sm"
           >
             {batchCreateMutation.isLoading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
+              <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              <Save className="w-5 h-5" />
+              <Save className="w-4 h-4" />
             )}
             Submit {newRows.length} New Orders
           </button>

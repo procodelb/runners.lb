@@ -44,6 +44,11 @@ async function initializeDatabase() {
       const sslConfig = shouldEnableSsl ? { rejectUnauthorized: false } : undefined;
       const channelBinding = (new URL(rawUrl)).searchParams.get('channel_binding') || process.env.PG_CHANNEL_BINDING || 'require';
       console.log('🔐 SSL enabled:', shouldEnableSsl, '| channel_binding:', channelBinding);
+      if (!/require/i.test(String(channelBinding || ''))) {
+        console.warn('⚠️ channel_binding is not set to require. Neon may mandate this. Ensure your DATABASE_URL ends with channel_binding=require');
+      }
+
+      const slowMsThreshold = Number(process.env.PG_SLOW_MS || 200);
 
       const pool = new Pool({
         connectionString: rawUrl,
@@ -79,7 +84,12 @@ async function initializeDatabase() {
         try {
           const result = await pool.query(text, values);
           const duration = Date.now() - start;
-          console.log(`📊 Query executed in ${duration}ms: ${text.substring(0, 60)}...`);
+          const summary = text.replace(/\s+/g, ' ').trim().substring(0, 120);
+          if (duration > slowMsThreshold) {
+            console.warn(`🐢 Slow query (${duration}ms > ${slowMsThreshold}ms): ${summary}`);
+          } else {
+            console.log(`📊 Query executed in ${duration}ms: ${summary}...`);
+          }
           return result.rows || [];
         } catch (err) {
           console.error('❌ Query error:', err.message);
@@ -99,7 +109,12 @@ async function initializeDatabase() {
         try {
           const result = await pool.query(pgText, values);
           const duration = Date.now() - start;
-          console.log(`📊 Run executed in ${duration}ms: ${pgText.substring(0, 60)}...`);
+          const summary = pgText.replace(/\s+/g, ' ').trim().substring(0, 120);
+          if (duration > slowMsThreshold) {
+            console.warn(`🐢 Slow run (${duration}ms > ${slowMsThreshold}ms): ${summary}`);
+          } else {
+            console.log(`📊 Run executed in ${duration}ms: ${summary}...`);
+          }
           if (/^insert\s+/i.test(pgText)) {
             const id = result.rows?.[0]?.id;
             return { id, changes: result.rowCount };

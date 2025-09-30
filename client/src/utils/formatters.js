@@ -10,7 +10,7 @@ export const formatCurrency = (amount, currency = 'USD') => {
       maximumFractionDigits: 2,
     }).format(amount);
   } else if (currency === 'LBP') {
-    return new Intl.NumberFormat('ar-LB', {
+    return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'LBP',
       minimumFractionDigits: 0,

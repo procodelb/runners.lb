@@ -53,16 +53,35 @@ const allowedOrigins = [
   ...parseEnvOrigins(),
   "http://localhost:5173",
   "http://localhost:5175",
+  "http://localhost:5176",
   "http://127.0.0.1:5173",
   "http://127.0.0.1:5175",
+  "http://127.0.0.1:5176",
   "https://runners-lb.vercel.app"
 ];
 
+function isDevLocalhost(origin) {
+  try {
+    const url = new URL(origin);
+    const isLocalHost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    return process.env.NODE_ENV !== 'production' && isLocalHost;
+  } catch {
+    return false;
+  }
+}
+
 console.log('🌐 CORS allowed origins:', allowedOrigins);
 
+// Socket.IO with strict CORS: exact-match of requesting Origin
 const io = socketIo(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const normalized = origin.replace(/\/$/, '');
+      const isAllowed = allowedOrigins.some(o => o.replace(/\/$/, '') === normalized) || isDevLocalhost(origin);
+      if (isAllowed) return callback(null, true);
+      return callback(new Error('Not allowed by CORS'));
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
@@ -81,23 +100,12 @@ app.use(compression());
 app.use(limiter);
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-
-    // Normalize origin (strip trailing slash)
     const normalized = origin.replace(/\/$/, '');
-
-    // Check if origin is in allowed list
-    if (allowedOrigins.some(o => o.replace(/\/$/, '') === normalized)) {
+    if (allowedOrigins.some(o => o.replace(/\/$/, '') === normalized) || isDevLocalhost(origin)) {
       return callback(null, true);
     }
-
-    // Allow localhost variations
-    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-      return callback(null, true);
-    }
-
-    callback(new Error('Not allowed by CORS'));
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -107,7 +115,14 @@ app.use(cors({
 
 // Ensure preflight requests are handled for all routes
 app.options('*', cors({
-  origin: allowedOrigins,
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    const normalized = origin.replace(/\/$/, '');
+    if (allowedOrigins.some(o => o.replace(/\/$/, '') === normalized) || isDevLocalhost(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],

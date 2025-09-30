@@ -67,6 +67,18 @@ export const ordersApi = {
     return response.data;
   },
 
+  // Batch create orders
+  batchCreate: async (orders) => {
+    const response = await api.post('/orders/batch', { orders });
+    return response.data;
+  },
+
+  // Bulk assign driver
+  bulkAssignDriver: async (orderIds, driverId) => {
+    const response = await api.patch('/orders/assign', { order_ids: orderIds, driver_id: driverId });
+    return response.data;
+  },
+
   // Get order statistics
   getOrderStats: async () => {
     const response = await api.get('/orders/stats');

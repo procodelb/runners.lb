@@ -52,11 +52,12 @@ router.post('/signup', async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
     );
 
-    // Set secure HTTP-only cookie with the token
+    // Set secure HTTP-only cookie with environment-aware SameSite/Secure
+    const isProd = process.env.NODE_ENV === 'production';
     res.cookie('authToken', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProd, // true only in production (requires HTTPS)
+      sameSite: isProd ? 'none' : 'lax', // allow cross-site XHR in prod, workable in dev
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
       path: '/'
     });
@@ -127,11 +128,12 @@ router.post('/login', async (req, res) => {
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
 
-    // Set secure HTTP-only cookie with the token
+    // Set secure HTTP-only cookie with environment-aware SameSite/Secure
+    const isProd = process.env.NODE_ENV === 'production';
     res.cookie('authToken', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // true in production (HTTPS)
-      sameSite: 'strict',
+      secure: isProd, // true only in production (requires HTTPS)
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
       path: '/'
     });
@@ -211,10 +213,11 @@ router.get('/me', async (req, res) => {
 // Logout user (clear both cookie and client-side token)
 router.post('/logout', (req, res) => {
   // Clear the HTTP-only cookie
+  const isProd = process.env.NODE_ENV === 'production';
   res.clearCookie('authToken', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
     path: '/'
   });
   

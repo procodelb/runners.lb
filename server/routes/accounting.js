@@ -2,6 +2,7 @@ const express = require('express');
 const { query, run } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const router = express.Router();
+const { getEntities, getEntityOrders, cashout } = require('../controllers/accountingController');
 
 // Get comprehensive accounting data
 router.get('/', authenticateToken, async (req, res) => {
@@ -1795,3 +1796,8 @@ router.get('/statement', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+
+// New unified accounting endpoints
+router.get('/entities', authenticateToken, (req, res) => getEntities(req, res));
+router.get('/:type/:id/orders', authenticateToken, (req, res) => getEntityOrders(req, res));
+router.post('/cashout', authenticateToken, (req, res) => cashout(req, res));

@@ -7,7 +7,8 @@ import { toast } from 'react-hot-toast';
 import api from '../api';
 
 const OrderHistory = () => {
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders' or 'clients'
+  const [activeTab, setActiveTab] = useState('orders');
+  const [activeGroup, setActiveGroup] = useState('client'); // 'client' | 'driver' | 'third_party'
   const [filters, setFilters] = useState({
     from_date: '',
     to_date: '',
@@ -18,13 +19,13 @@ const OrderHistory = () => {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showOrderModal, setShowOrderModal] = useState(false);
 
-  const { data: orders, isLoading: ordersLoading, error: ordersError, refetch: refetchOrders } = useQuery(
+  const { data: grouped, isLoading: ordersLoading, error: ordersError, refetch: refetchOrders } = useQuery(
     ['orderHistory', filters],
-    () => api.get('/orders/history', { params: filters }),
+    () => api.get('/order-history', { params: { ...filters } }),
     {
       refetchOnWindowFocus: false,
       retry: 1,
-      select: (response) => response.data?.data || []
+      select: (response) => response.data?.data || { client: [], driver: [], third_party: [] }
     }
   );
 
@@ -148,7 +149,7 @@ const OrderHistory = () => {
         </div>
         <div className="flex items-center space-x-3">
           <span className="text-sm text-gray-500">
-            Total: {activeTab === 'orders' ? (orders?.length || 0) : (clients?.length || 0)} {activeTab === 'orders' ? 'orders' : 'clients'}
+            Total: {activeTab === 'orders' ? ((grouped?.[activeGroup] || []).length) : ((clients || []).length)} {activeTab === 'orders' ? 'orders' : 'clients'}
           </span>
         </div>
       </motion.div>
@@ -161,7 +162,8 @@ const OrderHistory = () => {
         className="bg-white rounded-lg shadow-sm border border-gray-200"
       >
         <div className="border-b border-gray-200">
-          <nav className="flex space-x-8 px-6">
+          <nav className="flex items-center justify-between px-6">
+            <div className="flex space-x-8">
             <button
               onClick={() => setActiveTab('orders')}
               className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
@@ -184,6 +186,14 @@ const OrderHistory = () => {
               <Users className="w-4 h-4" />
               Clients History
             </button>
+            </div>
+            {activeTab === 'orders' && (
+              <div className="flex items-center space-x-2 py-2">
+                <button onClick={() => setActiveGroup('client')} className={`px-3 py-1 rounded text-xs ${activeGroup==='client'?'bg-blue-100 text-blue-700':'text-gray-600 hover:bg-gray-100'}`}>Client</button>
+                <button onClick={() => setActiveGroup('driver')} className={`px-3 py-1 rounded text-xs ${activeGroup==='driver'?'bg-blue-100 text-blue-700':'text-gray-600 hover:bg-gray-100'}`}>Drivers</button>
+                <button onClick={() => setActiveGroup('third_party')} className={`px-3 py-1 rounded text-xs ${activeGroup==='third_party'?'bg-blue-100 text-blue-700':'text-gray-600 hover:bg-gray-100'}`}>Third Parties</button>
+              </div>
+            )}
           </nav>
         </div>
       </motion.div>
@@ -298,7 +308,7 @@ const OrderHistory = () => {
       >
         {activeTab === 'orders' ? (
           <OrdersTable 
-            orders={orders} 
+            orders={grouped?.[activeGroup] || []} 
             drivers={drivers}
             onViewOrder={viewOrderDetails}
             onExportPDF={exportToPDF}

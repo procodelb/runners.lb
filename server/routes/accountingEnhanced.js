@@ -29,7 +29,31 @@ router.get('/clients', authenticateToken, async (req, res) => {
       params.push(`%${search}%`, `%${search}%`);
     }
     
+    // Orders aggregates per client
     const clientsQuery = `
+      WITH orders_agg AS (
+        SELECT 
+          o.brand_name,
+          COUNT(o.id) AS orders_count,
+          COALESCE(SUM(o.total_usd),0) AS orders_total_usd,
+          COALESCE(SUM(o.total_lbp),0) AS orders_total_lbp,
+          COALESCE(SUM(o.delivery_fee_usd),0) AS fees_total_usd,
+          COALESCE(SUM(o.delivery_fee_lbp),0) AS fees_total_lbp
+        FROM orders o
+        ${whereClause}
+        GROUP BY o.brand_name
+      ),
+      payments_agg AS (
+        SELECT 
+          c.business_name,
+          COALESCE(SUM(CASE WHEN t.direction = 'credit' THEN t.amount_usd ELSE 0 END),0) AS payments_total_usd,
+          COALESCE(SUM(CASE WHEN t.direction = 'credit' THEN t.amount_lbp ELSE 0 END),0) AS payments_total_lbp,
+          COALESCE(SUM(CASE WHEN t.direction = 'debit' THEN t.amount_usd ELSE 0 END),0) AS debits_total_usd,
+          COALESCE(SUM(CASE WHEN t.direction = 'debit' THEN t.amount_lbp ELSE 0 END),0) AS debits_total_lbp
+        FROM clients c
+        LEFT JOIN transactions t ON t.actor_type = 'client' AND t.actor_id = c.id
+        GROUP BY c.business_name
+      )
       SELECT 
         c.id,
         c.business_name,
@@ -37,19 +61,24 @@ router.get('/clients', authenticateToken, async (req, res) => {
         c.phone,
         c.email,
         c.address,
-        COALESCE(SUM(o.total_usd), 0) as total_usd,
-        COALESCE(SUM(o.total_lbp), 0) as total_lbp,
-        COUNT(o.id) as order_count,
-        COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_usd ELSE 0 END), 0) as paid_usd,
-        COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_lbp ELSE 0 END), 0) as paid_lbp,
-        COALESCE(SUM(CASE WHEN o.payment_status = 'unpaid' THEN o.total_usd ELSE 0 END), 0) as unpaid_usd,
-        COALESCE(SUM(CASE WHEN o.payment_status = 'unpaid' THEN o.total_lbp ELSE 0 END), 0) as unpaid_lbp
+        COALESCE(oa.orders_count,0) AS orders_count,
+        COALESCE(oa.orders_total_usd,0) AS orders_total_usd,
+        COALESCE(oa.orders_total_lbp,0) AS orders_total_lbp,
+        COALESCE(oa.fees_total_usd,0) AS fees_total_usd,
+        COALESCE(oa.fees_total_lbp,0) AS fees_total_lbp,
+        COALESCE(pa.payments_total_usd,0) AS payments_total_usd,
+        COALESCE(pa.payments_total_lbp,0) AS payments_total_lbp,
+        COALESCE(pa.debits_total_usd,0) AS debits_total_usd,
+        COALESCE(pa.debits_total_lbp,0) AS debits_total_lbp,
+        0::numeric AS old_balance_usd,
+        0::bigint AS old_balance_lbp,
+        (COALESCE(oa.orders_total_usd,0) - COALESCE(pa.payments_total_usd,0) + COALESCE(pa.debits_total_usd,0)) AS new_balance_usd,
+        (COALESCE(oa.orders_total_lbp,0) - COALESCE(pa.payments_total_lbp,0) + COALESCE(pa.debits_total_lbp,0)) AS new_balance_lbp
       FROM clients c
-      LEFT JOIN orders o ON c.business_name = o.brand_name ${whereClause.replace('WHERE 1=1', '')}
-      GROUP BY c.id, c.business_name, c.contact_person, c.phone, c.email, c.address
+      LEFT JOIN orders_agg oa ON oa.brand_name = c.business_name
+      LEFT JOIN payments_agg pa ON pa.business_name = c.business_name
       ORDER BY c.business_name
     `;
-    
     const clients = await query(clientsQuery, params);
     
     res.json({
@@ -110,29 +139,50 @@ router.get('/clients/:id', authenticateToken, async (req, res) => {
     
     const orders = await query(ordersQuery, params);
     
-    // Calculate totals
+    // Totals and statement
     const totals = orders.reduce((acc, order) => {
-      acc.total_revenue_usd += parseFloat(order.total_usd || 0);
-      acc.total_revenue_lbp += parseInt(order.total_lbp || 0);
-      acc.total_expenses_usd += parseFloat(order.driver_fee_usd || 0) + parseFloat(order.third_party_fee_usd || 0);
-      acc.total_expenses_lbp += parseInt(order.driver_fee_lbp || 0) + parseInt(order.third_party_fee_lbp || 0);
+      acc.orders_total_usd += parseFloat(order.total_usd || 0);
+      acc.orders_total_lbp += parseInt(order.total_lbp || 0);
+      acc.fees_total_usd += parseFloat(order.delivery_fee_usd || 0);
+      acc.fees_total_lbp += parseInt(order.delivery_fee_lbp || 0);
       return acc;
-    }, {
-      total_revenue_usd: 0,
-      total_revenue_lbp: 0,
-      total_expenses_usd: 0,
-      total_expenses_lbp: 0
-    });
-    
-    totals.net_balance_usd = totals.total_revenue_usd - totals.total_expenses_usd;
-    totals.net_balance_lbp = totals.total_revenue_lbp - totals.total_expenses_lbp;
+    }, { orders_total_usd: 0, orders_total_lbp: 0, fees_total_usd: 0, fees_total_lbp: 0 });
+
+    // Payments and adjustments from transactions
+    const txWhere = ['t.actor_type = ?','t.actor_id = ?'];
+    const txParams = ['client', id];
+    if (from_date) { txWhere.push('t.created_at >= ?'); txParams.push(from_date); }
+    if (to_date) { txWhere.push('t.created_at <= ?'); txParams.push(to_date + ' 23:59:59'); }
+    const txSql = `
+      SELECT t.* FROM transactions t WHERE ${txWhere.join(' AND ')} ORDER BY t.created_at ASC
+    `;
+    const transactions = await query(txSql, txParams);
+    const payments_total_usd = transactions.reduce((s,t)=> s + (t.direction==='credit'? parseFloat(t.amount_usd||0):0), 0);
+    const payments_total_lbp = transactions.reduce((s,t)=> s + (t.direction==='credit'? parseInt(t.amount_lbp||0):0), 0);
+    const debits_total_usd = transactions.reduce((s,t)=> s + (t.direction==='debit'? parseFloat(t.amount_usd||0):0), 0);
+    const debits_total_lbp = transactions.reduce((s,t)=> s + (t.direction==='debit'? parseInt(t.amount_lbp||0):0), 0);
+
+    const old_balance_usd = 0;
+    const old_balance_lbp = 0;
+    const new_balance_usd = old_balance_usd + totals.orders_total_usd - payments_total_usd + debits_total_usd;
+    const new_balance_lbp = old_balance_lbp + totals.orders_total_lbp - payments_total_lbp + debits_total_lbp;
     
     res.json({
       success: true,
       data: {
         client,
         orders,
-        ...totals
+        transactions,
+        orders_total_usd: totals.orders_total_usd,
+        orders_total_lbp: totals.orders_total_lbp,
+        fees_total_usd: totals.fees_total_usd,
+        fees_total_lbp: totals.fees_total_lbp,
+        payments_total_usd,
+        payments_total_lbp,
+        old_balance_usd,
+        old_balance_lbp,
+        new_balance_usd,
+        new_balance_lbp
       }
     });
   } catch (error) {
@@ -311,7 +361,8 @@ router.get('/thirdparty', authenticateToken, async (req, res) => {
         COALESCE(SUM(o.third_party_fee_lbp), 0) as total_lbp,
         COUNT(o.id) as delivered_orders,
         COALESCE(SUM(o.total_usd), 0) as total_revenue_usd,
-        COALESCE(SUM(o.total_lbp), 0) as total_revenue_lbp
+        COALESCE(SUM(o.total_lbp), 0) as total_revenue_lbp,
+        COALESCE(MAX(o.created_at), CURRENT_TIMESTAMP) as last_order_at
       FROM third_parties tp
       LEFT JOIN orders o ON tp.id = o.third_party_id ${whereClause.replace('WHERE tp.active = true', '')}
       GROUP BY tp.id, tp.name, tp.contact_person, tp.phone, tp.email, tp.commission_rate
@@ -329,7 +380,8 @@ router.get('/thirdparty', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch third parties accounting data',
-      error: error.message
+      error: error.message,
+      data: []
     });
   }
 });

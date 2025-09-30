@@ -1,5 +1,20 @@
 import api from './index';
 
+export async function fetchEntities(params = {}) {
+  const { data } = await api.get('/accounting/entities', { params });
+  return data;
+}
+
+export async function fetchEntityOrders(type, id, params = {}) {
+  const { data } = await api.get(`/accounting/${type}/${id}/orders`, { params });
+  return data;
+}
+
+export async function cashoutOrder(orderId, mode) {
+  const { data } = await api.post('/accounting/cashout', { orderId, mode });
+  return data;
+}
+
 export const accountingApi = {
   // Get all transactions
   getTransactions: async (params = {}) => {
@@ -78,3 +93,9 @@ export const accountingApi = {
     return response.data;
   }
 };
+
+// Helper for price-list search used by Add Order flows when needed in accounting context
+export async function fetchPriceListSearch(q) {
+  const { data } = await api.get('/price-list/search', { params: { q } });
+  return data;
+}

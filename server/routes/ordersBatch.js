@@ -1,5 +1,5 @@
 const express = require('express');
-const { query, run } = require('../config/database');
+const { query, run, usdToLbp, lbpToUsd } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const router = express.Router();
 
@@ -26,9 +26,11 @@ router.post('/', authenticateToken, async (req, res) => {
       const orderData = orders[i];
       
       try {
-        // Validate required fields
-        if (!orderData.brand_name && !orderData.customer_name) {
-          errors.push(`Order ${i + 1}: brand_name or customer_name is required`);
+        // Adapter mappings and validations
+        const clientName = orderData.client_name || orderData.client || orderData.brand_name || '';
+        const customerName = orderData.customer || orderData.customer_name || '';
+        if (!clientName && !customerName) {
+          errors.push(`Order ${i + 1}: client/brand_name or customer_name is required`);
           continue;
         }
 
@@ -41,9 +43,9 @@ router.post('/', authenticateToken, async (req, res) => {
           type: orderData.type || 'ecommerce',
           is_purchase: orderData.is_purchase ? 1 : 0,
           customer_phone: orderData.customer_phone || '',
-          customer_name: orderData.customer_name || '',
+          customer_name: customerName,
           customer_address: orderData.customer_address || '',
-          brand_name: orderData.brand_name || '',
+          brand_name: clientName,
           voucher_code: orderData.voucher_code || '',
           deliver_method: orderData.deliver_method || 'in_house',
           delivery_mode: orderData.delivery_mode || 'direct',
@@ -55,36 +57,65 @@ router.post('/', authenticateToken, async (req, res) => {
           driver_fee_lbp: parseInt(orderData.driver_fee_lbp) || 0,
           instant: orderData.instant ? 1 : 0,
           notes: orderData.notes || '',
-          total_usd: parseFloat(orderData.total_usd) || 0,
-          total_lbp: parseInt(orderData.total_lbp) || 0,
-          delivery_fee_usd: parseFloat(orderData.delivery_fee_usd) || 0,
-          delivery_fee_lbp: parseInt(orderData.delivery_fee_lbp) || 0,
+          total_usd: 0,
+          total_lbp: 0,
+          delivery_fee_usd: 0,
+          delivery_fee_lbp: 0,
           status: orderData.status || 'new',
           payment_status: orderData.payment_status || 'unpaid',
-          prepaid_status: orderData.prepaid_status || 'unpaid',
+          prepaid_status: Boolean(orderData.prepaid_status) || false,
           latitude: orderData.latitude || null,
           longitude: orderData.longitude || null,
           location_text: orderData.location_text || '',
           created_by: req.user.id
         };
 
+        // Map potential driver_fees to delivery fees if frontend sends wrong key
+        const deliveryFeeUsdInput = orderData.delivery_fee_usd ?? orderData.fee_usd ?? orderData.fees_usd ?? orderData.driver_fees_usd ?? orderData.driver_fee_usd ?? 0;
+        const deliveryFeeLbpInput = orderData.delivery_fee_lbp ?? orderData.fee_lbp ?? orderData.fees_lbp ?? orderData.driver_fees_lbp ?? orderData.driver_fee_lbp ?? 0;
+
+        // Dual currency compute for delivery fees
+        let dfUsd = Number(deliveryFeeUsdInput) || 0;
+        let dfLbp = Number(deliveryFeeLbpInput) || 0;
+        if (dfUsd > 0 && (!dfLbp || dfLbp === 0)) {
+          dfLbp = await usdToLbp(dfUsd);
+        } else if (dfLbp > 0 && (!dfUsd || dfUsd === 0)) {
+          dfUsd = await lbpToUsd(dfLbp);
+        }
+        order.delivery_fee_usd = dfUsd;
+        order.delivery_fee_lbp = dfLbp;
+
+        // Dual currency compute for totals if provided
+        let totUsd = Number(orderData.total_usd || 0);
+        let totLbp = Number(orderData.total_lbp || 0);
+        if (totUsd > 0 && (!totLbp || totLbp === 0)) {
+          totLbp = await usdToLbp(totUsd);
+        } else if (totLbp > 0 && (!totUsd || totUsd === 0)) {
+          totUsd = await lbpToUsd(totLbp);
+        }
+        order.total_usd = totUsd;
+        order.total_lbp = totLbp;
+
+        // Support third_party_id if provided
+        const thirdPartyId = orderData.third_party_id || null;
+
         // Insert order
         const insertQuery = `
           INSERT INTO orders (
             order_ref, type, is_purchase, customer_phone, customer_name, customer_address,
-            brand_name, voucher_code, deliver_method, delivery_mode, third_party_name,
+            brand_name, voucher_code, deliver_method, delivery_mode, third_party_name, third_party_id,
             third_party_fee_usd, third_party_fee_lbp, driver_id, driver_fee_usd, driver_fee_lbp,
             instant, notes, total_usd, total_lbp, delivery_fee_usd, delivery_fee_lbp,
             status, payment_status, prepaid_status, latitude, longitude, location_text, created_by
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
           ) RETURNING *
         `;
 
         const values = [
           order.order_ref, order.type, order.is_purchase, order.customer_phone, order.customer_name,
           order.customer_address, order.brand_name, order.voucher_code, order.deliver_method,
-          order.delivery_mode, order.third_party_name, order.third_party_fee_usd, order.third_party_fee_lbp,
+          order.delivery_mode, order.third_party_name, thirdPartyId, order.third_party_fee_usd, order.third_party_fee_lbp,
           order.driver_id, order.driver_fee_usd, order.driver_fee_lbp, order.instant, order.notes,
           order.total_usd, order.total_lbp, order.delivery_fee_usd, order.delivery_fee_lbp,
           order.status, order.payment_status, order.prepaid_status, order.latitude, order.longitude,

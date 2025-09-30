@@ -1,5 +1,5 @@
 const express = require('express');
-const { query, run } = require('../config/database');
+const { query, run, usdToLbp, lbpToUsd } = require('../config/database');
 const mcp = require('../mcp');
 const { authenticateToken, requireAnyRole } = require('../middleware/auth');
 const router = express.Router();
@@ -286,18 +286,24 @@ router.post('/income', authenticateToken, async (req, res) => {
       });
     }
 
+    // Compute missing currency
+    let incUsd = Number(amount_usd || 0);
+    let incLbp = Number(amount_lbp || 0);
+    if (incUsd > 0 && (!incLbp || incLbp === 0)) incLbp = await usdToLbp(incUsd);
+    if (incLbp > 0 && (!incUsd || incUsd === 0)) incUsd = await lbpToUsd(incLbp);
+
     // Get current balance
     const currentBalance = await getCashboxBalance();
     
     // Calculate new balance
-    const newBalanceUsd = currentBalance.balance_usd + (amount_usd || 0);
-    const newBalanceLbp = currentBalance.balance_lbp + (amount_lbp || 0);
+    const newBalanceUsd = currentBalance.balance_usd + incUsd;
+    const newBalanceLbp = currentBalance.balance_lbp + incLbp;
 
     // Create transaction record
     const transactionData = {
       tx_type: 'income',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
+      amount_usd: incUsd,
+      amount_lbp: incLbp,
       description: description,
       category: 'income',
       direction: 'credit',

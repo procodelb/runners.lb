@@ -20,7 +20,6 @@ import NewAccounting from './pages/NewAccounting';
 import Cashbox from './pages/Cashbox';
 import PriceList from './pages/PriceList';
 import OrderHistory from './pages/OrderHistory';
-import Transactions from './pages/Transactions';
 import Settings from './pages/Settings';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -179,8 +178,24 @@ const AppContent = () => {
   useEffect(() => {
     if (user && isAuthenticated) {
       console.log('🔌 AppContent: User authenticated, initializing Socket.IO...');
+      // Resolve Socket.IO base URL similar to API logic
+      let socketBase = import.meta.env.VITE_API_URL;
+      try {
+        if (!socketBase && typeof window !== 'undefined') {
+          const hostname = window.location.hostname;
+          if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            socketBase = 'http://localhost:5000';
+          } else if (hostname.includes('vercel.app')) {
+            socketBase = 'https://soufiam-erp-backend.onrender.com';
+          } else {
+            socketBase = 'https://soufiam-erp-backend.onrender.com';
+          }
+        }
+      } catch {}
+
       // Initialize Socket.IO connection
-      const newSocket = io(import.meta.env.VITE_API_URL || 'https://soufiam-erp-backend.onrender.com', {
+      const newSocket = io(socketBase, {
+        withCredentials: true,
         auth: {
           token: localStorage.getItem('token')
         }
@@ -334,16 +349,6 @@ const AppContent = () => {
                 return (
                   <Layout>
                     <OrderHistory />
-                  </Layout>
-                ); 
-              })()
-            } />
-            <Route path="/transactions" element={
-              (() => { 
-                console.log('💳 AppContent: Rendering transactions route'); 
-                return (
-                  <Layout>
-                    <Transactions />
                   </Layout>
                 ); 
               })()

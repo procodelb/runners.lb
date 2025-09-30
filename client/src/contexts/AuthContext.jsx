@@ -202,12 +202,22 @@ export function AuthProvider({ children }) {
           throw new Error('Failed to load user data after login');
         }
       } else {
-        console.log('❌ AuthContext: No token received, clearing state...');
-        // ensure state consistent
-        safeLocalRemove("token");
-        setToken(null);
-        setUser(null);
-        setIsAuthenticated(false);
+        // Support cookie-only auth: if server sets httpOnly cookie and returns user or allows /me
+        console.log('ℹ️ AuthContext: No token received, attempting cookie-based auth...');
+        if (!newUser) {
+          newUser = await fetchMe(null);
+        }
+        if (newUser) {
+          console.log('✅ AuthContext: Cookie-based login succeeded');
+          setUser(newUser);
+          setIsAuthenticated(true);
+        } else {
+          console.log('❌ AuthContext: Cookie-based login failed, clearing state...');
+          safeLocalRemove("token");
+          setToken(null);
+          setUser(null);
+          setIsAuthenticated(false);
+        }
       }
 
       const result = { token: newToken, user: newUser };

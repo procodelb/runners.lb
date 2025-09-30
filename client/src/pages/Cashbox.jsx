@@ -25,6 +25,7 @@ import api from '../api';
 const Cashbox = () => {
   const [showIncomeModal, setShowIncomeModal] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [expenseCategory, setExpenseCategory] = useState('');
 
   const queryClient = useQueryClient();
 
@@ -47,7 +48,8 @@ const Cashbox = () => {
     (incomeData) => api.post('/cashbox/income', incomeData),
     {
       onSuccess: () => {
-        queryClient.invalidateQueries(['cashbox']);
+        // Invalidate all cashbox-related queries (balance, timeline)
+        queryClient.invalidateQueries('cashbox');
         setShowIncomeModal(false);
         toast.success('Income added successfully');
       },
@@ -61,7 +63,8 @@ const Cashbox = () => {
     (expenseData) => api.post('/cashbox/expense', expenseData),
     {
       onSuccess: () => {
-        queryClient.invalidateQueries(['cashbox']);
+        // Invalidate all cashbox-related queries
+        queryClient.invalidateQueries('cashbox');
         setShowExpenseModal(false);
         toast.success('Expense added successfully');
       },
@@ -238,12 +241,14 @@ const Cashbox = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={() => setShowExpenseModal(false)}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-white rounded-lg p-6 w-full max-w-md"
+              onClick={(e) => e.stopPropagation()}
             >
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-2xl font-bold">Add Expense</h2>
@@ -365,13 +370,20 @@ const ExpenseForm = ({ onSubmit, onCancel }) => {
   const [formData, setFormData] = useState({
     amount_usd: '',
     amount_lbp: '',
+    category_title: '',
+    category_item: '',
     description: '',
     notes: ''
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSubmit(formData);
+    const description = formData.description || `${formData.category_title} - ${formData.category_item}`;
+    onSubmit({
+      amount_usd: formData.amount_usd,
+      amount_lbp: formData.amount_lbp,
+      description
+    });
   };
 
   const handleChange = (e) => {
@@ -408,6 +420,94 @@ const ExpenseForm = ({ onSubmit, onCancel }) => {
             placeholder="0"
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
           />
+        </div>
+      </div>
+
+      {/* Expense Categories */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
+          <select
+            value={formData.category_title}
+            onChange={(e) => setFormData(prev => ({ ...prev, category_title: e.target.value, category_item: '' }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            <option value="">Select Category</option>
+            <option value="Operations / Fleet">Operations / Fleet</option>
+            <option value="Staff & HR">Staff & HR</option>
+            <option value="Office & Admin">Office & Admin</option>
+            <option value="Marketing & Sales">Marketing & Sales</option>
+            <option value="Operations Support">Operations Support</option>
+            <option value="Technology & Systems">Technology & Systems</option>
+            <option value="Financial & Other">Financial & Other</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Item</label>
+          <select
+            value={formData.category_item}
+            onChange={(e) => setFormData(prev => ({ ...prev, category_item: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            <option value="">Select Item</option>
+            {formData.category_title === 'Operations / Fleet' && (
+              <>
+                <option>Driver Salaries & Wages</option>
+                <option>Driver Overtime</option>
+                <option>Delivery Fees Paid to Subcontractors</option>
+                <option>Fuel Expense</option>
+                <option>Vehicle Maintenance & Repairs</option>
+                <option>Vehicle Insurance</option>
+                <option>Vehicle Registration & Licensing</option>
+                <option>Bike/Car Rental</option>
+              </>
+            )}
+            {formData.category_title === 'Staff & HR' && (
+              <>
+                <option>Staff Salaries & Wages</option>
+                <option>Employee Benefits</option>
+                <option>Training & Recruitment</option>
+              </>
+            )}
+            {formData.category_title === 'Office & Admin' && (
+              <>
+                <option>Rent</option>
+                <option>Utilities</option>
+                <option>Office Supplies</option>
+                <option>Software Subscriptions</option>
+                <option>Phone & Communication</option>
+                <option>Bank Fees & Charges</option>
+                <option>Professional Fees</option>
+              </>
+            )}
+            {formData.category_title === 'Marketing & Sales' && (
+              <>
+                <option>Advertising & Promotions</option>
+                <option>Branding & Design</option>
+                <option>Sponsorships / Community Events</option>
+              </>
+            )}
+            {formData.category_title === 'Operations Support' && (
+              <>
+                <option>Packaging Materials</option>
+                <option>Uniforms</option>
+              </>
+            )}
+            {formData.category_title === 'Technology & Systems' && (
+              <>
+                <option>Website & Hosting</option>
+                <option>App Development & Maintenance</option>
+                <option>IT Support & Repairs</option>
+              </>
+            )}
+            {formData.category_title === 'Financial & Other' && (
+              <>
+                <option>Depreciation</option>
+                <option>Currency Exchange / Transfer Fees</option>
+                <option>Miscellaneous Expenses</option>
+              </>
+            )}
+          </select>
         </div>
       </div>
 

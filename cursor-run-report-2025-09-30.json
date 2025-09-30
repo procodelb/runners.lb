@@ -1,0 +1,58 @@
+{
+  "summary": "Soufiam ERP - Accounting & Orders Full Scope Implementation",
+  "date": "2025-09-30",
+  "services": {
+    "backend": {
+      "status": "started",
+      "port": 5000
+    },
+    "frontend": {
+      "status": "started",
+      "port": 5175
+    }
+  },
+  "files_changed": [
+    "client/src/components/SidebarToggleButton.jsx",
+    "client/src/components/Layout.jsx",
+    "client/src/api/accounting.js",
+    "client/src/pages/OrderHistory.jsx",
+    "client/src/styles/accounting.css",
+    "server/controllers/accountingController.js",
+    "server/routes/orderHistory.js",
+    "server/routes/orders.js",
+    "server/scripts/fixMissingColumns.js",
+    "server/test-simple.js"
+  ],
+  "db_migrations": [
+    "orders: add computed_total_usd, computed_total_lbp, accounting_cashed, moved_to_history, moved_at, created_at, updated_at",
+    "cashbox_entries: ensure exists",
+    "cashbox_reservations: ensure exists",
+    "transactions: ensure direction, category, updated_at",
+    "price_list: ensure third_party_fee_usd/lbp, is_active"
+  ],
+  "endpoints_added_or_updated": [
+    "/api/accounting/entities",
+    "/api/accounting/:type/:id/orders",
+    "/api/accounting/cashout",
+    "/api/order-history (grouped by client/driver/third_party)",
+    "/api/orders (create: persist computed totals, go_to_market reservations)"
+  ],
+  "tests": {
+    "unit": {
+      "computeDisplayedAmounts": "passed"
+    },
+    "integration": {
+      "note": "Basic smoke prepared; backend/frontend started."
+    }
+  },
+  "health": {
+    "backend": "running",
+    "frontend": "running"
+  },
+  "followups": [
+    "If pg_dump is required for backups in dev, install PostgreSQL client tools and set DATABASE_URL, then run pg_dump manually.",
+    "Manually spot-check Accounting and OrderHistory pages in the UI."
+  ]
+}
+
+

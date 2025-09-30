@@ -70,7 +70,12 @@ router.get('/', authenticateToken, async (req, res) => {
         d.phone as driver_phone,
         u.full_name as created_by_name,
         c.business_name as client_name,
-        c.contact_person as client_contact
+        c.contact_person as client_contact,
+        CASE 
+          WHEN o.third_party_name IS NOT NULL AND o.third_party_name <> '' THEN 'third_party'
+          WHEN o.driver_id IS NOT NULL THEN 'driver'
+          ELSE 'client'
+        END as account_type
       FROM orders o
       LEFT JOIN drivers d ON o.driver_id = d.id
       LEFT JOIN users u ON o.created_by = u.id
@@ -83,9 +88,16 @@ router.get('/', authenticateToken, async (req, res) => {
     filterParams.push(limit, offset);
     const ordersResult = await query(ordersQuery, filterParams);
 
+    // Group by account_type for UI tabs
+    const grouped = { client: [], driver: [], third_party: [] };
+    for (const row of ordersResult) {
+      const key = row.account_type || 'client';
+      if (grouped[key]) grouped[key].push(row);
+    }
+
     res.json({
       success: true,
-      data: ordersResult || [],
+      data: grouped,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),

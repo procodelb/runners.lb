@@ -49,6 +49,12 @@ api.interceptors.request.use(
     }
     
     console.log(`🌐 API Request: ${config.method?.toUpperCase()} ${config.url}`);
+    try {
+      console.log('🧾 API Request Headers:', { Authorization: config.headers?.Authorization, 'Content-Type': config.headers?.['Content-Type'] });
+      if (config.data) {
+        console.log('📦 API Request Body:', typeof config.data === 'string' ? config.data : JSON.stringify(config.data));
+      }
+    } catch {}
     return config;
   },
   (error) => {
@@ -392,7 +398,7 @@ export const apiHelpers = {
         currency: 'USD',
       }).format(amount);
     } else if (currency === 'LBP') {
-      return new Intl.NumberFormat('ar-LB', {
+      return new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'LBP',
       }).format(amount);

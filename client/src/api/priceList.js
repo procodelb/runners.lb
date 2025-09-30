@@ -72,5 +72,17 @@ export const priceListApi = {
   getPriceListStats: async () => {
     const response = await api.get('/price-list/stats');
     return response.data;
+  },
+
+  // Search price list for autocomplete
+  searchPriceList: async (query) => {
+    const response = await api.get('/price-list/search', { params: { q: query } });
+    return response.data;
+  },
+
+  // Toggle price list item status
+  togglePriceListStatus: async (id, isActive) => {
+    const response = await api.patch(`/price-list/${id}/toggle-status`, { is_active: isActive });
+    return response.data;
   }
 };

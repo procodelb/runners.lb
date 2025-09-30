@@ -31,9 +31,9 @@ export const SocketProvider = ({ children, socket }) => {
       }
     };
 
-    const handleDisconnect = () => {
+    const handleDisconnect = (reason) => {
       setIsConnected(false);
-      console.log('Socket disconnected');
+      console.warn('Socket disconnected:', reason);
     };
 
     const handleOrderUpdate = (data) => {
@@ -69,6 +69,9 @@ export const SocketProvider = ({ children, socket }) => {
     socket.on('driver-update', handleDriverUpdate);
     socket.on('transaction-update', handleTransactionUpdate);
     socket.on('error', handleError);
+    socket.on('connect_error', (err) => {
+      console.error('Socket connect_error:', err?.message || err);
+    });
 
     // Cleanup
     return () => {

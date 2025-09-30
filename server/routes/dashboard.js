@@ -329,7 +329,6 @@ router.get('/process-timeline', authenticateToken, async (req, res) => {
         c.amount_lbp,
         c.description,
         c.created_at,
-        c.updated_at,
         u.full_name as created_by_name,
         d.full_name as driver_name
       FROM cashbox_entries c

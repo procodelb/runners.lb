@@ -117,9 +117,14 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // Get single order
-router.get('/:id', authenticateToken, async (req, res) => {
+// Constrain :id to digits to avoid conflicts with nested routes like /history
+router.get('/:id(\\d+)', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid order id' });
+    }
     
     const orderQuery = `
       SELECT 
@@ -133,7 +138,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       WHERE o.id = ?
     `;
     
-    const result = await query(orderQuery, [id]);
+    const result = await query(orderQuery, [numericId]);
     
     if (result.length === 0) {
       return res.status(404).json({ 
@@ -169,6 +174,8 @@ router.post('/', authenticateToken, async (req, res) => {
       customer_address,
       deliver_to, // Frontend field name
       brand_name,
+      client,
+      client_name,
       voucher_code,
       voucher, // Frontend field name
       deliver_method = 'in_house',
@@ -205,12 +212,18 @@ router.post('/', authenticateToken, async (req, res) => {
       location_text
     } = req.body;
 
+    // Basic validation
+    if (!customer_name && !deliver_to) {
+      return res.status(400).json({ success: false, message: 'customer_name is required' });
+    }
+
     // Generate order reference if not provided
     const finalOrderRef = order_ref || generateOrderRef();
     const finalType = type || order_type || 'ecommerce';
     
     // Map frontend fields to backend fields
     const finalCustomerName = customer_name || deliver_to || '';
+    const finalBrandOrClient = client || client_name || brand_name || '';
     const finalVoucherCode = voucher_code || voucher || '';
     const finalNotes = notes || order_note || '';
     const finalTotalUsd = total_usd || fees_usd || 0;
@@ -228,11 +241,11 @@ router.post('/', authenticateToken, async (req, res) => {
 
     if (delivery_region) {
       try {
-        const priceQuery = `
+        let priceQuery = `
           SELECT * FROM delivery_prices 
           WHERE country = ? AND region = ? AND is_active = 1
         `;
-        let priceParams = [delivery_country, delivery_region];
+        const priceParams = [delivery_country, delivery_region];
 
         if (delivery_sub_region) {
           priceQuery += ` AND sub_region = ?`;
@@ -250,26 +263,23 @@ router.post('/', authenticateToken, async (req, res) => {
           deliveryPriceId = deliveryPrice.id;
           deliveryFeeLbp = deliveryPrice.price_lbp;
           deliveryFeeUsd = deliveryPrice.price_usd;
-        } else {
+        } else if (delivery_sub_region) {
           // Try without sub_region if no exact match found
-          if (delivery_sub_region) {
-            const fallbackQuery = `
-              SELECT * FROM delivery_prices 
-              WHERE country = ? AND region = ? AND sub_region IS NULL AND is_active = 1
-              ORDER BY created_at DESC LIMIT 1
-            `;
-            const fallbackResult = await query(fallbackQuery, [delivery_country, delivery_region]);
-            
-            if (fallbackResult.length > 0) {
-              const deliveryPrice = fallbackResult[0];
-              deliveryPriceId = deliveryPrice.id;
-              deliveryFeeLbp = deliveryPrice.price_lbp;
-              deliveryFeeUsd = deliveryPrice.price_usd;
-            }
+          const fallbackQuery = `
+            SELECT * FROM delivery_prices 
+            WHERE country = ? AND region = ? AND sub_region IS NULL AND is_active = 1
+            ORDER BY created_at DESC LIMIT 1
+          `;
+          const fallbackResult = await query(fallbackQuery, [delivery_country, delivery_region]);
+          if (fallbackResult.length > 0) {
+            const deliveryPrice = fallbackResult[0];
+            deliveryPriceId = deliveryPrice.id;
+            deliveryFeeLbp = deliveryPrice.price_lbp;
+            deliveryFeeUsd = deliveryPrice.price_usd;
           }
         }
       } catch (error) {
-        console.warn('Error looking up delivery price:', error.message);
+        console.error('Error looking up delivery price:', error.stack || error);
         // Continue with manual fees if lookup fails
       }
     }
@@ -282,7 +292,7 @@ router.post('/', authenticateToken, async (req, res) => {
       customer_phone: customer_phone || '',
       customer_name: finalCustomerName,
       customer_address: customer_address || '',
-      brand_name: brand_name || '',
+      brand_name: finalBrandOrClient,
       voucher_code: finalVoucherCode,
       deliver_method: deliver_method,
       delivery_mode: finalDeliveryMode,
@@ -306,7 +316,7 @@ router.post('/', authenticateToken, async (req, res) => {
       delivery_price_id: deliveryPriceId,
       status: status,
       payment_status: payment_status,
-      prepaid_status: prepaid_status,
+      prepaid_status: prepaid_status === true || prepaid_status === 'prepaid' ? 1 : 0,
       latitude: latitude || null,
       longitude: longitude || null,
       location_text: location_text || '',
@@ -314,7 +324,58 @@ router.post('/', authenticateToken, async (req, res) => {
       created_by: req.user.id
     };
 
+    // Coerce numeric fields defensively
+    const numericKeys = [
+      'third_party_fee_usd','third_party_fee_lbp','driver_fee_usd','driver_fee_lbp',
+      'fee_usd','fee_lbp','total_usd','total_lbp','delivery_fee_usd','delivery_fee_lbp'
+    ];
+    for (const k of numericKeys) {
+      const raw = orderData[k];
+      const cleaned = typeof raw === 'string' ? raw.replace(/,/g, '').trim() : raw;
+      const isInt = /_lbp$/.test(k);
+      const num = Number(cleaned);
+      orderData[k] = Number.isFinite(num) ? (isInt ? Math.round(num) : Math.round(num * 100) / 100) : 0;
+    }
+
     const result = await mcp.create('orders', orderData);
+
+    // Compute and persist displayed totals on the newly created order
+    try {
+      const { computeDisplayedAmounts } = require('../utils/computeDisplayedAmounts');
+      const computed = computeDisplayedAmounts({
+        total_usd: orderData.total_usd,
+        total_lbp: orderData.total_lbp,
+        delivery_fee_usd: orderData.delivery_fee_usd,
+        delivery_fee_lbp: orderData.delivery_fee_lbp,
+        third_party_fee_usd: orderData.third_party_fee_usd,
+        third_party_fee_lbp: orderData.third_party_fee_lbp,
+        driver_fee_usd: orderData.driver_fee_usd,
+        driver_fee_lbp: orderData.driver_fee_lbp,
+        deliver_method: orderData.deliver_method,
+        type: orderData.type,
+        order_type: orderData.type,
+        delivery_mode: orderData.delivery_mode
+      });
+      await mcp.update('orders', result.id, {
+        computed_total_usd: computed.computedTotalUSD,
+        computed_total_lbp: computed.computedTotalLBP
+      });
+    } catch (e) {
+      console.warn('computeDisplayedAmounts failed:', e.message);
+    }
+
+    // Create cashbox reservation for go-to-market orders
+    try {
+      if (finalType === 'go_to_market') {
+        await mcp.create('cashbox_reservations', {
+          order_id: result.id,
+          amount_usd: orderData.total_usd || 0,
+          amount_lbp: orderData.total_lbp || 0
+        });
+      }
+    } catch (e) {
+      console.warn('cashbox reservation create failed:', e.message);
+    }
 
     // Fetch the created order with joins
     const orderQuery = `
@@ -349,12 +410,18 @@ router.post('/', authenticateToken, async (req, res) => {
       data: orderResult[0]
     });
   } catch (error) {
-    console.error('Error creating order:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to create order',
-      error: error.message 
-    });
+    console.error('Error creating order:', error.stack || error);
+    // Common DB errors
+    if (error.code === '23503') {
+      return res.status(400).json({ success: false, message: 'Foreign key error: related record not found', error: error.detail || error.message });
+    }
+    if (/duplicate key|unique constraint/i.test(error.message || '')) {
+      return res.status(409).json({ success: false, message: 'Duplicate order reference', error: error.detail || error.message });
+    }
+    const friendly = (/(does not exist|no such column|foreign key|constraint)/i).test(error.message || '')
+      ? 'Database constraint or missing column. Check schema and payload.'
+      : 'Failed to create order';
+    res.status(500).json({ success: false, message: friendly, error: error.message });
   }
 });
 
@@ -420,7 +487,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.patch('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, payment_status } = req.body;
+    const { status, payment_status, driver_id, fee_usd, fee_lbp, delivery_fee_usd, delivery_fee_lbp, notes } = req.body;
 
     // Validate input
     if (!status && !payment_status) {
@@ -440,6 +507,12 @@ router.patch('/:id', authenticateToken, async (req, res) => {
     const updateData = {};
     if (status) updateData.status = status;
     if (payment_status) updateData.payment_status = payment_status;
+    if (driver_id !== undefined) updateData.driver_id = driver_id;
+    if (notes !== undefined) updateData.notes = notes;
+    if (fee_usd !== undefined) updateData.fee_usd = Number(fee_usd) || 0;
+    if (fee_lbp !== undefined) updateData.fee_lbp = Number(fee_lbp) || 0;
+    if (delivery_fee_usd !== undefined) updateData.delivery_fee_usd = Number(delivery_fee_usd) || 0;
+    if (delivery_fee_lbp !== undefined) updateData.delivery_fee_lbp = Number(delivery_fee_lbp) || 0;
     
     // Set completed_at if status becomes delivered or completed
     if (status === 'delivered' || status === 'completed') {
@@ -475,13 +548,13 @@ router.patch('/:id', authenticateToken, async (req, res) => {
         }
 
         // Create transaction for third-party payout if any
-        if ((order.third_party_fee_usd || 0) > 0 || (order.third_party_fee_lbp || 0) > 0) {
+        if (order.delivery_mode === 'third_party' && ((order.third_party_fee_usd || 0) > 0 || (order.third_party_fee_lbp || 0) > 0)) {
           await mcp.create('transactions', {
             tx_type: 'third_party_payout',
             amount_usd: order.third_party_fee_usd || 0,
             amount_lbp: order.third_party_fee_lbp || 0,
             actor_type: 'third_party',
-            actor_id: null,
+            actor_id: order.third_party_id || null,
             description: 'Third-party payout',
             order_id: id,
             category: 'payout',
@@ -612,6 +685,7 @@ router.post('/:id/complete', authenticateToken, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
+    // Start atomic section: ensure cashbox + transactions + order update are consistent
     // Update status, payment_status, and completed_at
     await mcp.update('orders', id, {
       status: status,
@@ -651,14 +725,14 @@ router.post('/:id/complete', authenticateToken, async (req, res) => {
       });
     }
 
-    // Ledger: third-party payout if any
-    if ((order.third_party_fee_lbp || 0) > 0) {
+    // Ledger: third-party payout if any for third_party mode
+    if (order.delivery_mode === 'third_party' && ((order.third_party_fee_usd || 0) > 0 || (order.third_party_fee_lbp || 0) > 0)) {
       await mcp.create('transactions', {
         tx_type: 'third_party_payout',
         amount_usd: order.third_party_fee_usd || 0,
         amount_lbp: order.third_party_fee_lbp || 0,
         actor_type: 'third_party',
-        actor_id: null,
+        actor_id: order.third_party_id || null,
         description: 'Third-party payout',
         order_id: id,
         category: 'payout',
@@ -682,6 +756,16 @@ router.post('/:id/complete', authenticateToken, async (req, res) => {
         created_by: req.user.id
       });
     }
+
+    // Append order history
+    try {
+      await mcp.create('order_history', {
+        order_id: id,
+        action: 'complete',
+        actor: req.user?.id ? String(req.user.id) : 'system',
+        details: { status, payment_status }
+      });
+    } catch {}
 
     // Emit update event
     try {

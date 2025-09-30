@@ -15,7 +15,8 @@ import {
   User,
   X,
   Save,
-  Loader2
+  Loader2,
+  Map
 } from 'lucide-react';
 import api from '../api';
 import toast from 'react-hot-toast';
@@ -32,10 +33,10 @@ const CRM = () => {
     address: '',
     instagram: '',
     website: '',
-    google_location_lat: '',
-    google_location_lng: '',
+    google_map_link: '',
     category: ''
   });
+  const [customCategory, setCustomCategory] = useState('');
 
   const queryClient = useQueryClient();
 
@@ -48,6 +49,17 @@ const CRM = () => {
       select: (response) => response.data?.data || []
     }
   );
+
+  // Search clients for autocomplete (used by Orders page)
+  const searchClients = async (query) => {
+    try {
+      const response = await api.get(`/clients/search/${encodeURIComponent(query)}`);
+      return response.data?.data || [];
+    } catch (error) {
+      console.error('Error searching clients:', error);
+      return [];
+    }
+  };
 
   // Add new client mutation
   const addClientMutation = useMutation(
@@ -109,8 +121,7 @@ const CRM = () => {
       address: '',
       instagram: '',
       website: '',
-      google_location_lat: '',
-      google_location_lng: '',
+      google_map_link: '',
       category: ''
     });
   };
@@ -118,10 +129,21 @@ const CRM = () => {
   const handleSubmit = (e) => {
     e.preventDefault();
     
+    const payload = {
+      business_name: formData.business_name,
+      contact_person: formData.contact_person,
+      phone: formData.phone,
+      address: formData.address,
+      instagram: formData.instagram,
+      website: formData.website,
+      google_location: formData.google_map_link || '',
+      category: formData.category
+    };
+
     if (editingClient) {
-      updateClientMutation.mutate({ id: editingClient.id, clientData: formData });
+      updateClientMutation.mutate({ id: editingClient.id, clientData: payload });
     } else {
-      addClientMutation.mutate(formData);
+      addClientMutation.mutate(payload);
     }
   };
 
@@ -134,8 +156,7 @@ const CRM = () => {
       address: client.address || '',
       instagram: client.instagram || '',
       website: client.website || '',
-      google_location_lat: client.google_location_lat || '',
-      google_location_lng: client.google_location_lng || '',
+      google_map_link: client.google_location || '',
       category: client.category || ''
     });
     setShowAddModal(true);
@@ -192,22 +213,22 @@ const CRM = () => {
       </div>
 
       {/* Search and Filters */}
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="bg-white rounded-lg shadow-md p-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
             <input
               type="text"
               placeholder="Search clients..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
           <div>
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
               <option value="">All Categories</option>
               <option value="ecommerce">E-commerce</option>
@@ -215,8 +236,20 @@ const CRM = () => {
               <option value="wholesale">Wholesale</option>
               <option value="service">Service</option>
               <option value="manufacturing">Manufacturing</option>
+              <option value="other">Other</option>
             </select>
           </div>
+          {selectedCategory === 'other' && (
+            <div>
+              <input
+                type="text"
+                placeholder="Type custom category..."
+                value={customCategory}
+                onChange={(e) => setCustomCategory(e.target.value)}
+                className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -227,15 +260,15 @@ const CRM = () => {
             key={client.id}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow"
+            className="bg-white rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow"
           >
             <div className="flex justify-between items-start mb-4">
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                <h3 className="text-base font-semibold text-gray-900 mb-1">
                   {client.business_name}
                 </h3>
                 {client.category && (
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getCategoryColor(client.category)}`}>
+                  <span className={`inline-flex px-2 py-0.5 text-[10px] font-semibold rounded-full ${getCategoryColor(client.category)}`}>
                     {client.category}
                   </span>
                 )}
@@ -255,46 +288,54 @@ const CRM = () => {
                 </button>
               </div>
             </div>
-
-            <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
               {client.contact_person && (
-                <div className="flex items-center text-sm text-gray-600">
-                  <User className="w-4 h-4 mr-2" />
-                  {client.contact_person}
+                <div className="flex items-center text-xs text-gray-600">
+                  <User className="w-4 h-4 mr-1" />
+                  <span className="truncate">{client.contact_person}</span>
                 </div>
               )}
-              
               {client.phone && (
-                <div className="flex items-center text-sm text-gray-600">
-                  <Phone className="w-4 h-4 mr-2" />
-                  {client.phone}
+                <div className="flex items-center text-xs text-gray-600">
+                  <Phone className="w-4 h-4 mr-1" />
+                  <span className="truncate">{client.phone}</span>
                 </div>
               )}
-              
               {client.address && (
-                <div className="flex items-center text-sm text-gray-600">
-                  <MapPin className="w-4 h-4 mr-2" />
-                  {client.address}
+                <div className="flex items-center text-xs text-gray-600 col-span-2">
+                  <MapPin className="w-4 h-4 mr-1" />
+                  <span className="truncate">{client.address}</span>
                 </div>
               )}
-              
               {client.instagram && (
-                <div className="flex items-center text-sm text-gray-600">
-                  <Instagram className="w-4 h-4 mr-2" />
-                  {client.instagram}
+                <div className="flex items-center text-xs text-gray-600">
+                  <Instagram className="w-4 h-4 mr-1" />
+                  <span className="truncate">{client.instagram}</span>
                 </div>
               )}
-              
               {client.website && (
-                <div className="flex items-center text-sm text-gray-600">
-                  <Globe className="w-4 h-4 mr-2" />
+                <div className="flex items-center text-xs text-gray-600">
+                  <Globe className="w-4 h-4 mr-1" />
                   <a 
                     href={client.website.startsWith('http') ? client.website : `https://${client.website}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800"
+                    className="text-blue-600 hover:text-blue-800 truncate"
                   >
                     {client.website}
+                  </a>
+                </div>
+              )}
+              {client.google_location && (
+                <div className="flex items-center text-xs text-gray-600 col-span-2">
+                  <Map className="w-4 h-4 mr-1" />
+                  <a
+                    href={String(client.google_location).startsWith('http') ? client.google_location : `https://www.google.com/maps/search/?api=1&query=${client.google_location}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 truncate"
+                  >
+                    Open in Google Maps
                   </a>
                 </div>
               )}
@@ -311,15 +352,17 @@ const CRM = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={() => setShowAddModal(false)}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+              className="bg-white rounded-lg p-4 w-full max-w-xl max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
             >
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold">
+                <h2 className="text-xl font-bold">
                   {editingClient ? 'Edit Client' : 'Add New Client'}
                 </h2>
                 <button
@@ -330,10 +373,10 @@ const CRM = () => {
                 </button>
               </div>
 
-              <form onSubmit={handleSubmit} className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   {/* Business Name */}
-                  <div className="md:col-span-2">
+                  <div className="md:col-span-3">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Business Name *
                     </label>
@@ -342,7 +385,7 @@ const CRM = () => {
                       name="business_name"
                       value={formData.business_name}
                       onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                       required
                     />
                   </div>
@@ -357,7 +400,7 @@ const CRM = () => {
                       name="contact_person"
                       value={formData.contact_person}
                       onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     />
                   </div>
 
@@ -371,12 +414,12 @@ const CRM = () => {
                       name="phone"
                       value={formData.phone}
                       onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     />
                   </div>
 
                   {/* Address */}
-                  <div className="md:col-span-2">
+                  <div className="md:col-span-3">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Address
                     </label>
@@ -385,7 +428,7 @@ const CRM = () => {
                       name="address"
                       value={formData.address}
                       onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     />
                   </div>
 
@@ -399,7 +442,7 @@ const CRM = () => {
                       name="instagram"
                       value={formData.instagram}
                       onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                       placeholder="@username"
                     />
                   </div>
@@ -414,45 +457,28 @@ const CRM = () => {
                       name="website"
                       value={formData.website}
                       onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                       placeholder="https://example.com"
                     />
                   </div>
 
-                  {/* Google Location Lat */}
-                  <div>
+                  {/* Google Map Link */}
+                  <div className="md:col-span-3">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Latitude
+                      Google Map Link
                     </label>
                     <input
-                      type="number"
-                      step="any"
-                      name="google_location_lat"
-                      value={formData.google_location_lat}
+                      type="url"
+                      name="google_map_link"
+                      value={formData.google_map_link}
                       onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="33.8935"
-                    />
-                  </div>
-
-                  {/* Google Location Lng */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Longitude
-                    </label>
-                    <input
-                      type="number"
-                      step="any"
-                      name="google_location_lng"
-                      value={formData.google_location_lng}
-                      onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="35.5018"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      placeholder="https://maps.google.com/..."
                     />
                   </div>
 
                   {/* Category */}
-                  <div className="md:col-span-2">
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Category
                     </label>
@@ -460,7 +486,7 @@ const CRM = () => {
                       name="category"
                       value={formData.category}
                       onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     >
                       <option value="">Select Category</option>
                       <option value="ecommerce">E-commerce</option>
@@ -468,22 +494,35 @@ const CRM = () => {
                       <option value="wholesale">Wholesale</option>
                       <option value="service">Service</option>
                       <option value="manufacturing">Manufacturing</option>
+                      <option value="other">Other</option>
                     </select>
                   </div>
+                  {formData.category === 'other' && (
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Custom Category</label>
+                      <input
+                        type="text"
+                        value={customCategory}
+                        onChange={(e) => setCustomCategory(e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        placeholder="Type category"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex justify-end space-x-3">
                   <button
                     type="button"
                     onClick={() => setShowAddModal(false)}
-                    className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
+                    className="px-3 py-1.5 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors text-sm"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={addClientMutation.isLoading || updateClientMutation.isLoading}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-2 text-sm"
                   >
                     {(addClientMutation.isLoading || updateClientMutation.isLoading) ? (
                       <Loader2 className="w-4 h-4 animate-spin" />

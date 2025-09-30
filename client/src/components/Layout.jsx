@@ -26,9 +26,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { apiHelpers } from '../api';
 import toast from 'react-hot-toast';
+import SidebarToggleButton from './SidebarToggleButton';
 
 const Layout = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(() => {
+    const saved = localStorage.getItem('sidebarVisible');
+    return saved === null ? true : saved === 'true';
+  });
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [language, setLanguage] = useState(localStorage.getItem('language') || 'en');
   const [notifications, setNotifications] = useState([]);
@@ -49,7 +54,6 @@ const Layout = ({ children }) => {
     { name: 'Cashbox', href: '/cashbox', icon: Wallet },
     { name: 'Price List', href: '/price-list', icon: DollarSign },
     { name: 'Order History', href: '/order-history', icon: History },
-    { name: 'Transactions', href: '/transactions', icon: Receipt },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
 
@@ -99,10 +103,14 @@ const Layout = ({ children }) => {
     return location.pathname === href;
   };
 
+  useEffect(() => {
+    localStorage.setItem('sidebarVisible', String(sidebarVisible));
+  }, [sidebarVisible]);
+
   return (
     <div className="h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white font-inter flex">
       {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-sidebar-900 border-r border-sidebar-700 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 ${
+      <div className={`${sidebarVisible ? '' : 'hidden'} fixed inset-y-0 left-0 z-50 w-64 bg-sidebar-900 border-r border-sidebar-700 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       }`} style={{ maxHeight: '100vh', overflowY: 'auto' }}>
         <div className="flex items-center justify-between h-16 px-6 border-b border-sidebar-700">
@@ -165,7 +173,7 @@ const Layout = ({ children }) => {
 
       {/* Mobile sidebar overlay */}
       <AnimatePresence>
-        {sidebarOpen && (
+        {sidebarOpen && sidebarVisible && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -205,6 +213,10 @@ const Layout = ({ children }) => {
 
             {/* Right side actions */}
             <div className="flex items-center space-x-4">
+              <SidebarToggleButton
+                sidebarVisible={sidebarVisible}
+                onToggle={() => setSidebarVisible(v => !v)}
+              />
               {/* Connection status */}
               <div className="flex items-center space-x-2">
                 <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-accent-green' : 'bg-accent-red'}`} />

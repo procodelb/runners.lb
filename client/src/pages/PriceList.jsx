@@ -16,6 +16,8 @@ const PriceList = () => {
     area: '',
     fee_usd: '',
     fee_lbp: '',
+    third_party_fee_usd: '',
+    third_party_fee_lbp: '',
     is_active: true
   });
 
@@ -42,6 +44,8 @@ const PriceList = () => {
           area: '',
           fee_usd: '',
           fee_lbp: '',
+          third_party_fee_usd: '',
+          third_party_fee_lbp: '',
           is_active: true
         });
         queryClient.invalidateQueries(['prices']);
@@ -130,14 +134,15 @@ const PriceList = () => {
     setShowEditModal(true);
   };
 
-  const filteredPrices = prices?.data?.filter(price => {
+  // prices is already the array due to select above
+  const filteredPrices = (prices || []).filter(price => {
     const matchesSearch = price.country.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          price.area.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCountry = !filterCountry || price.country === filterCountry;
     return matchesSearch && matchesCountry;
   }) || [];
 
-  const countries = [...new Set((prices || []).map(price => price.country))];
+  const countries = [...new Set((Array.isArray(prices) ? prices : []).map(price => price.country).filter(Boolean))];
 
   if (isLoading) {
     return (
@@ -258,7 +263,10 @@ const PriceList = () => {
                   Location
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Fees
+                  In-House Fees
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Third-Party Fees
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
@@ -270,7 +278,20 @@ const PriceList = () => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               <AnimatePresence>
-                {(filteredPrices || []).map((price, index) => (
+                {(Array.isArray(filteredPrices) ? filteredPrices : []).map((price, index) => {
+                  const parseMoney = (val, precision = 2) => {
+                    if (val === null || val === undefined) return 0;
+                    const s = typeof val === 'string' ? val.replace(/,/g, '').trim() : val;
+                    const n = Number(s);
+                    if (!Number.isFinite(n)) return 0;
+                    return precision === 0 ? Math.round(n) : Math.round(n * Math.pow(10, precision)) / Math.pow(10, precision);
+                  };
+                  const feeUsd = parseMoney(price.fee_usd, 2);
+                  const feeLbp = parseMoney(price.fee_lbp, 0);
+                  const tpFeeUsd = parseMoney(price.third_party_fee_usd, 2);
+                  const tpFeeLbp = parseMoney(price.third_party_fee_lbp, 0);
+
+                  return (
                   <motion.tr
                     key={price.id}
                     initial={{ opacity: 0, y: 20 }}
@@ -298,18 +319,37 @@ const PriceList = () => {
                     
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="space-y-1">
-                        {price.fee_usd > 0 && (
+                        {feeUsd > 0 && (
                           <div className="flex items-center space-x-2">
                             <DollarSign className="h-4 w-4 text-green-600" />
                             <span className="text-sm font-medium text-gray-900">
-                              ${price.fee_usd.toFixed(2)}
+                              ${feeUsd.toFixed(2)}
                             </span>
                           </div>
                         )}
-                        {price.fee_lbp > 0 && (
+                        {feeLbp > 0 && (
                           <div className="flex items-center space-x-2">
                             <span className="text-sm font-medium text-gray-900">
-                              {price.fee_lbp.toLocaleString()} LBP
+                              {feeLbp.toLocaleString()} LBP
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="space-y-1">
+                        {tpFeeUsd > 0 && (
+                          <div className="flex items-center space-x-2">
+                            <DollarSign className="h-4 w-4 text-green-600" />
+                            <span className="text-sm font-medium text-gray-900">
+                              ${tpFeeUsd.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {tpFeeLbp > 0 && (
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm font-medium text-gray-900">
+                              {tpFeeLbp.toLocaleString()} LBP
                             </span>
                           </div>
                         )}
@@ -348,7 +388,7 @@ const PriceList = () => {
                       </div>
                     </td>
                   </motion.tr>
-                ))}
+                );})}
               </AnimatePresence>
             </tbody>
           </table>
@@ -415,7 +455,7 @@ const PriceList = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Fee USD
+                      In-House Fee USD
                     </label>
                     <input
                       type="number"
@@ -429,13 +469,42 @@ const PriceList = () => {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Fee LBP
+                      In-House Fee LBP
                     </label>
                     <input
                       type="number"
                       placeholder="0"
                       value={newPrice.fee_lbp}
                       onChange={(e) => setNewPrice(prev => ({ ...prev, fee_lbp: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Third-Party Fee USD
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={newPrice.third_party_fee_usd}
+                      onChange={(e) => setNewPrice(prev => ({ ...prev, third_party_fee_usd: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Third-Party Fee LBP
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="0"
+                      value={newPrice.third_party_fee_lbp}
+                      onChange={(e) => setNewPrice(prev => ({ ...prev, third_party_fee_lbp: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -526,7 +595,7 @@ const PriceList = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Fee USD
+                      In-House Fee USD
                     </label>
                     <input
                       type="number"
@@ -539,12 +608,39 @@ const PriceList = () => {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Fee LBP
+                      In-House Fee LBP
                     </label>
                     <input
                       type="number"
                       value={selectedPrice.fee_lbp}
                       onChange={(e) => setSelectedPrice(prev => ({ ...prev, fee_lbp: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Third-Party Fee USD
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={selectedPrice.third_party_fee_usd}
+                      onChange={(e) => setSelectedPrice(prev => ({ ...prev, third_party_fee_usd: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Third-Party Fee LBP
+                    </label>
+                    <input
+                      type="number"
+                      value={selectedPrice.third_party_fee_lbp}
+                      onChange={(e) => setSelectedPrice(prev => ({ ...prev, third_party_fee_lbp: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>

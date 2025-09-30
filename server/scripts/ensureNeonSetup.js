@@ -78,6 +78,38 @@ async function ensureAllTables() {
     effective_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );`);
 
+  // Delivery prices table (used for location-based fees)
+  await pool.query(`CREATE TABLE IF NOT EXISTS delivery_prices (
+    id SERIAL PRIMARY KEY,
+    country TEXT DEFAULT 'Lebanon',
+    region TEXT NOT NULL,
+    sub_region TEXT,
+    price_lbp BIGINT DEFAULT 0,
+    price_usd NUMERIC(10,2) DEFAULT 0,
+    is_active BOOLEAN DEFAULT true,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+  );`);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_delivery_prices_region ON delivery_prices(country, region, COALESCE(sub_region,'~'));
+    CREATE INDEX IF NOT EXISTS idx_delivery_prices_active ON delivery_prices(is_active);
+  `);
+
+  // Third parties table
+  await pool.query(`CREATE TABLE IF NOT EXISTS third_parties (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    contact_person TEXT,
+    contact_phone TEXT,
+    email TEXT,
+    commission_rate NUMERIC(5,2) DEFAULT 0,
+    active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+  );`);
+
   // Orders table
   await pool.query(`CREATE TABLE IF NOT EXISTS orders (
     id SERIAL PRIMARY KEY,
@@ -110,6 +142,23 @@ async function ensureAllTables() {
     completed_at TIMESTAMPTZ
   );`);
 
+  // Ensure additional order fields exist (non-destructive migrations)
+  await pool.query(`
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS prepaid_status BOOLEAN DEFAULT false;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS third_party_id INTEGER REFERENCES third_parties(id) ON DELETE SET NULL;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_mode TEXT DEFAULT 'direct';
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS fee_usd NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS fee_lbp BIGINT DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_country TEXT DEFAULT 'Lebanon';
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_region TEXT;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_sub_region TEXT;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_price_id INTEGER REFERENCES delivery_prices(id) ON DELETE SET NULL;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS latitude NUMERIC(10,6);
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS longitude NUMERIC(10,6);
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS location_text TEXT;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS external_id TEXT;
+  `);
+
   // Transactions table
   await pool.query(`CREATE TABLE IF NOT EXISTS transactions (
     id SERIAL PRIMARY KEY,
@@ -121,8 +170,21 @@ async function ensureAllTables() {
     debit_account TEXT,
     credit_account TEXT,
     description TEXT,
+    category TEXT,
+    direction TEXT,
     order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+  );`);
+
+  // Order history / audit table
+  await pool.query(`CREATE TABLE IF NOT EXISTS order_history (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    actor TEXT,
+    details JSONB,
     created_at TIMESTAMPTZ DEFAULT now()
   );`);
 
@@ -176,6 +238,7 @@ async function ensureAllTables() {
     CREATE INDEX IF NOT EXISTS idx_transactions_actor ON transactions(actor_type, actor_id);
     CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(tx_type);
     CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
+    CREATE INDEX IF NOT EXISTS idx_order_history_order ON order_history(order_id, created_at);
   `);
 
   console.log('✅ All tables and indexes created successfully');
@@ -202,9 +265,20 @@ async function seedInitialData() {
   console.log('✅ Cashbox initialized');
 
   // Ensure exchange rate exists
-  await pool.query(`INSERT INTO exchange_rates(lbp_per_usd)
-    VALUES ($1) ON CONFLICT DO NOTHING`, [Number(process.env.EXCHANGE_RATE || 89000)]);
+  await pool.query(`
+    INSERT INTO exchange_rates(lbp_per_usd)
+    SELECT $1
+    WHERE NOT EXISTS (SELECT 1 FROM exchange_rates)
+  `, [Number(process.env.EXCHANGE_RATE || 89000)]);
   console.log('✅ Exchange rate initialized');
+
+  // Seed delivery prices if table exists and empty (minimal seed)
+  await pool.query(`
+    INSERT INTO delivery_prices(country, region, sub_region, price_lbp, price_usd, is_active)
+    SELECT 'Lebanon','Beirut',NULL, 200000, 0, true
+    WHERE NOT EXISTS (SELECT 1 FROM delivery_prices)
+  `);
+  console.log('✅ Delivery prices seeded (minimal)');
 }
 
 async function verifyConnection() {
