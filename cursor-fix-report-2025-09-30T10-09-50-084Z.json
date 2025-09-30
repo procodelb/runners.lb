@@ -1,0 +1,38 @@
+{
+  "startedAt": "2025-09-30T10:09:49.250Z",
+  "steps": [
+    {
+      "name": "login",
+      "ok": true
+    },
+    {
+      "name": "price-list",
+      "ok": false,
+      "error": {
+        "success": false,
+        "message": "Failed to fetch price list",
+        "error": "SQLITE_ERROR: unrecognized token: \":\""
+      }
+    },
+    {
+      "name": "accounting-thirdparty",
+      "ok": false,
+      "error": {
+        "success": false,
+        "message": "Failed to fetch third parties accounting data",
+        "error": "SQLITE_ERROR: no such table: third_parties",
+        "data": []
+      }
+    },
+    {
+      "name": "create-order",
+      "ok": false,
+      "error": {
+        "success": false,
+        "message": "Failed to create order",
+        "error": "SQLITE_ERROR: table orders has no column named delivery_mode"
+      }
+    }
+  ],
+  "finishedAt": "2025-09-30T10:09:50.084Z"
+}

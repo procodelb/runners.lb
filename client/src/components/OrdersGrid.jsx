@@ -274,6 +274,13 @@ const OrdersGrid = () => {
       return;
     }
 
+    const toNumber = (v, int = false) => {
+      const s = String(v ?? '').replace(/,/g, '').trim();
+      const n = Number(s);
+      if (!Number.isFinite(n)) return 0;
+      return int ? Math.round(n) : Math.round(n * 100) / 100;
+    };
+
     const ordersData = validRows.map(row => ({
       brand_name: row.client,
       customer_name: row.customer,
@@ -281,15 +288,15 @@ const OrdersGrid = () => {
       customer_address: row.address,
       latitude: row.latitude ? parseFloat(row.latitude) : null,
       longitude: row.longitude ? parseFloat(row.longitude) : null,
-      total_usd: parseFloat(row.price_usd) || 0,
-      total_lbp: parseInt(row.price_lbp) || 0,
-      delivery_fee_usd: parseFloat(row.delivery_fees_usd) || 0,
-      delivery_fee_lbp: parseInt(row.delivery_fees_lbp) || 0,
+      total_usd: toNumber(row.price_usd, false),
+      total_lbp: toNumber(row.price_lbp, true),
+      delivery_fee_usd: toNumber(row.delivery_fees_usd, false),
+      delivery_fee_lbp: toNumber(row.delivery_fees_lbp, true),
       type: row.order_type,
       delivery_mode: row.delivery_mode,
       third_party_id: row.delivery_mode === 'third_party' ? (row.third_party_id || null) : null,
-      third_party_fee_usd: row.delivery_mode === 'third_party' ? (parseFloat(row.third_party_fee_usd) || 0) : 0,
-      third_party_fee_lbp: row.delivery_mode === 'third_party' ? (parseInt(row.third_party_fee_lbp) || 0) : 0,
+      third_party_fee_usd: row.delivery_mode === 'third_party' ? toNumber(row.third_party_fee_usd, false) : 0,
+      third_party_fee_lbp: row.delivery_mode === 'third_party' ? toNumber(row.third_party_fee_lbp, true) : 0,
       driver_id: row.driver_id ? parseInt(row.driver_id) : null,
       payment_status: row.payment_status,
       status: row.order_status,
@@ -699,7 +706,7 @@ const OrdersGrid = () => {
                         placeholder="0.00"
                       />
                     ) : (
-                      <div className="text-xs text-gray-900">{formatCurrency(row.total_usd, 'USD')}</div>
+                      <div className="text-xs text-gray-900">{formatCurrency((row.computed_total_usd ?? row.total_usd), 'USD')}</div>
                     )}
                   </td>
                   <td className="px-1 py-1 whitespace-nowrap">
@@ -712,7 +719,7 @@ const OrdersGrid = () => {
                         placeholder="0"
                       />
                     ) : (
-                      <div className="text-xs text-gray-900">{formatCurrency(row.total_lbp, 'LBP')}</div>
+                      <div className="text-xs text-gray-900">{formatCurrency((row.computed_total_lbp ?? row.total_lbp), 'LBP')}</div>
                     )}
                   </td>
                   <td className="px-1 py-1 whitespace-nowrap">

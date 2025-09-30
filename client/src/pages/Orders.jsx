@@ -336,6 +336,13 @@ const Orders = () => {
     e.preventDefault();
     
     // Transform form data to match API expectations
+    const toNumber = (v, int = false) => {
+      const s = String(v ?? '').replace(/,/g, '').trim();
+      const n = Number(s);
+      if (!Number.isFinite(n)) return 0;
+      return int ? Math.round(n) : Math.round(n * 100) / 100;
+    };
+
     const orderData = {
       order_ref: formData.order_ref || generateOrderRef(),
       type: formData.type || 'ecommerce',
@@ -348,12 +355,12 @@ const Orders = () => {
       delivery_mode: (formData.deliver_method === 'third_party') ? 'third_party' : 'direct',
       driver_id: formData.driver_id || null,
       notes: formData.notes || '',
-      total_usd: parseFloat(formData.total_usd) || 0,
-      total_lbp: parseInt(formData.total_lbp) || 0,
-      third_party_fee_usd: parseFloat(formData.third_party_fee_usd) || 0,
-      third_party_fee_lbp: parseInt(formData.third_party_fee_lbp) || 0,
-      driver_fee_usd: parseFloat(formData.driver_fee_usd) || 0,
-      driver_fee_lbp: parseInt(formData.driver_fee_lbp) || 0,
+      total_usd: toNumber(formData.total_usd, false),
+      total_lbp: toNumber(formData.total_lbp, true),
+      third_party_fee_usd: toNumber(formData.third_party_fee_usd, false),
+      third_party_fee_lbp: toNumber(formData.third_party_fee_lbp, true),
+      driver_fee_usd: toNumber(formData.driver_fee_usd, false),
+      driver_fee_lbp: toNumber(formData.driver_fee_lbp, true),
       status: formData.status || 'new',
       payment_status: formData.payment_status || 'unpaid'
     };

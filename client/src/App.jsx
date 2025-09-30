@@ -17,6 +17,7 @@ import Orders from './pages/Orders';
 import Drivers from './pages/Drivers';
 import Accounting from './pages/Accounting';
 import NewAccounting from './pages/NewAccounting';
+import './styles/accounting.css';
 import Cashbox from './pages/Cashbox';
 import PriceList from './pages/PriceList';
 import OrderHistory from './pages/OrderHistory';

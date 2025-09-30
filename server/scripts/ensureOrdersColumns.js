@@ -9,12 +9,14 @@
 const { query } = require('../config/database');
 
 const MIGRATION_SQL = `
+BEGIN;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS computed_total_usd numeric DEFAULT 0;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS computed_total_lbp numeric DEFAULT 0;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS moved_to_history boolean DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS accounting_cashed boolean DEFAULT false;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
-`;
+COMMIT;`;
 
 async function main() {
   const env = String(process.env.NODE_ENV || 'development').toLowerCase();

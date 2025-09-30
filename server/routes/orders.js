@@ -82,6 +82,9 @@ router.get('/', authenticateToken, async (req, res) => {
     const ordersQuery = `
       SELECT 
         o.*,
+        COALESCE(o.computed_total_usd, 0) AS computed_total_usd,
+        COALESCE(o.computed_total_lbp, 0) AS computed_total_lbp,
+        COALESCE(o.accounting_cashed, 0) AS accounting_cashed,
         d.full_name as driver_name,
         d.phone as driver_phone,
         u.full_name as created_by_name
@@ -129,6 +132,9 @@ router.get('/:id(\\d+)', authenticateToken, async (req, res) => {
     const orderQuery = `
       SELECT 
         o.*,
+        COALESCE(o.computed_total_usd, 0) AS computed_total_usd,
+        COALESCE(o.computed_total_lbp, 0) AS computed_total_lbp,
+        COALESCE(o.accounting_cashed, 0) AS accounting_cashed,
         d.full_name as driver_name,
         d.phone as driver_phone,
         u.full_name as created_by_name
@@ -381,6 +387,9 @@ router.post('/', authenticateToken, async (req, res) => {
     const orderQuery = `
       SELECT 
         o.*,
+        COALESCE(o.computed_total_usd, 0) AS computed_total_usd,
+        COALESCE(o.computed_total_lbp, 0) AS computed_total_lbp,
+        COALESCE(o.accounting_cashed, 0) AS accounting_cashed,
         d.full_name as driver_name,
         d.phone as driver_phone,
         u.full_name as created_by_name,
