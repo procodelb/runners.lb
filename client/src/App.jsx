@@ -187,8 +187,15 @@ const AppContent = () => {
   useEffect(() => {
     if (user && isAuthenticated) {
       console.log('🔌 AppContent: User authenticated, initializing Socket.IO...');
-      // Force localhost for development
-      let socketBase = 'http://localhost:5000';
+      
+      // Resolve Socket.IO base URL
+      let socketBase = 'https://soufiam-erp-backend.onrender.com';
+      if (typeof window !== 'undefined') {
+        const hostname = window.location.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          socketBase = 'http://localhost:5000';
+        }
+      }
       console.log('🔌 Socket connecting to:', socketBase);
 
       // Initialize Socket.IO connection

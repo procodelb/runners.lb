@@ -9,6 +9,32 @@ const safeLocalGet = (k) => {
 const safeLocalSet = (k, v) => { try { localStorage.setItem(k, v); } catch(e){} };
 const safeLocalRemove = (k) => { try { localStorage.removeItem(k); } catch(e){} };
 
+// Helper function to get API base URL
+const getApiBaseUrl = () => {
+  // First, check if VITE_API_BASE_URL is explicitly set
+  if (import.meta?.env?.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '');
+  }
+  
+  // If running in browser, detect environment
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    
+    // Production: Use full backend URL
+    if (hostname.includes('vercel.app') || hostname.includes('netlify.app') || hostname.includes('.com')) {
+      return 'https://soufiam-erp-backend.onrender.com';
+    }
+    
+    // Development: Use relative path (Vite proxy will handle it)
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return '';
+    }
+  }
+  
+  // Default: empty string (will use relative paths)
+  return '';
+};
+
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => safeLocalGet("token"));
   const [user, setUser] = useState(null);
@@ -26,13 +52,9 @@ export function AuthProvider({ children }) {
       }
       
       // Resolve API base
-      let apiBase = (import.meta?.env?.VITE_API_BASE_URL)
-        ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
-        : '';
-      if (!apiBase) apiBase = '';
-      console.log('🔍 AuthContext using API base:', apiBase);
-      
-      console.log('🌐 fetchMe: Using API base:', apiBase);
+      const apiBase = getApiBaseUrl();
+      console.log('🔍 AuthContext using API base:', apiBase || '(relative /api)');
+      console.log('🌐 fetchMe: Using API base:', apiBase || '(relative /api)');
       
       const res = await fetch(`${apiBase}/api/auth/me`, {
         headers,
@@ -144,13 +166,9 @@ export function AuthProvider({ children }) {
     setLoading(true);
     try {
       // Resolve API base
-      let apiBase = (import.meta?.env?.VITE_API_BASE_URL)
-        ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
-        : '';
-      if (!apiBase) apiBase = '';
-      console.log('🔍 AuthContext using API base:', apiBase);
-      
-      console.log('🌐 AuthContext: Using API base:', apiBase);
+      const apiBase = getApiBaseUrl();
+      console.log('🔍 AuthContext using API base:', apiBase || '(relative /api)');
+      console.log('🌐 AuthContext: Using API base:', apiBase || '(relative /api)');
       
       const res = await fetch(`${apiBase}/api/auth/login`, {
         method: "POST",
@@ -240,11 +258,8 @@ export function AuthProvider({ children }) {
     setLoading(true);
     try {
       // Resolve API base
-      let apiBase = (import.meta?.env?.VITE_API_BASE_URL)
-        ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
-        : '';
-      if (!apiBase) apiBase = '';
-      console.log('🔍 AuthContext using API base:', apiBase);
+      const apiBase = getApiBaseUrl();
+      console.log('🔍 AuthContext using API base:', apiBase || '(relative /api)');
       
       const res = await fetch(`${apiBase}/api/auth/signup`, {
         method: "POST",
@@ -291,9 +306,9 @@ export function AuthProvider({ children }) {
     console.log('🚪 AuthContext: Logging out...');
     
     try {
-      // Force localhost for development
-      let apiBase = 'http://localhost:5000';
-      console.log('🔍 AuthContext using API base:', apiBase);
+      // Resolve API base
+      const apiBase = getApiBaseUrl();
+      console.log('🔍 AuthContext using API base:', apiBase || '(relative /api)');
       
       // Call logout endpoint to clear server-side cookies
       await fetch(`${apiBase}/api/auth/logout`, {

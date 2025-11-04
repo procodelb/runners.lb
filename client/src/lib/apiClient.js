@@ -14,11 +14,37 @@ import toast from 'react-hot-toast';
  * - Graceful error handling without UI crashes
  */
 
+// Helper function to get API base URL
+const getApiBaseUrl = () => {
+  // First, check if VITE_API_BASE_URL is explicitly set
+  if (import.meta?.env?.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '');
+  }
+  
+  // If running in browser, detect environment
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    
+    // Production: Use full backend URL
+    if (hostname.includes('vercel.app') || hostname.includes('netlify.app') || hostname.includes('.com')) {
+      return 'https://soufiam-erp-backend.onrender.com';
+    }
+    
+    // Development: Use relative path (Vite proxy will handle it)
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return '';
+    }
+  }
+  
+  // Default: empty string (will use relative paths)
+  return '';
+};
+
 class OfflineFirstApiClient {
   constructor() {
-    this.baseURL = (import.meta?.env?.VITE_API_BASE_URL)
-      ? import.meta.env.VITE_API_BASE_URL
-      : '/api';
+    const apiBase = getApiBaseUrl();
+    // For axios, we need to include /api in the base URL since paths don't include it
+    this.baseURL = apiBase ? `${apiBase}/api` : '/api';
     this.isOnline = navigator.onLine;
     this.isPaused = false;
     this.retryConfig = {
