@@ -54,7 +54,8 @@ const allowedOrigins = [
   "http://localhost:5176",
   "http://127.0.0.1:5173",
   "http://127.0.0.1:5175",
-  "http://127.0.0.1:5176"
+  "http://127.0.0.1:5176",
+  "https://runners-lb.vercel.app" // Production frontend URL
 ];
 
 function isDevLocalhost(origin) {
