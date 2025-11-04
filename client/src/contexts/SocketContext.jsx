@@ -33,7 +33,20 @@ export const SocketProvider = ({ children, socket }) => {
 
     const handleDisconnect = (reason) => {
       setIsConnected(false);
-      console.warn('Socket disconnected:', reason);
+      
+      // Only log warnings for unexpected disconnects
+      if (reason === 'io server disconnect') {
+        console.log('Socket disconnected by server (intentional)');
+        // Don't show error toast for server-initiated disconnects
+      } else if (reason === 'io client disconnect') {
+        console.log('Socket disconnected by client (intentional)');
+      } else {
+        console.warn('Socket disconnected:', reason);
+        // Only show error for unexpected network issues
+        if (reason === 'transport close' || reason === 'transport error') {
+          toast.error('Connection lost. Reconnecting...', { duration: 3000 });
+        }
+      }
     };
 
     const handleOrderUpdate = (data) => {

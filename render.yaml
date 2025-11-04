@@ -16,9 +16,9 @@ services:
       - key: JWT_EXPIRES_IN
         value: 24h
       - key: FRONTEND_URL
-        value: https://replace-with-your-vercel-domain
+        value: https://runners-lb.vercel.app
       - key: CLIENT_URL
-        value: https://replace-with-your-vercel-domain
+        value: https://runners-lb.vercel.app
       - key: EXCHANGE_RATE
         value: "89000"
       - key: MAX_FILE_SIZE

@@ -1,0 +1,13 @@
+{
+  "files": [
+    "server/routes/orders.js",
+    "server/routes/accountingEnhanced.js",
+    "server/routes/priceList.js",
+    "client/src/pages/Orders.jsx",
+    "client/src/components/OrdersGrid.jsx",
+    "client/src/pages/OrderHistory.jsx",
+    "client/src/pages/PriceList.jsx",
+    "client/src/App.jsx",
+    "server/utils/computeDisplayedAmounts.js"
+  ]
+}

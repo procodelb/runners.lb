@@ -15,17 +15,15 @@ const ordersRoutes = require('./routes/orders');
 const ordersBatchRoutes = require('./routes/ordersBatch');
 const orderHistoryRoutes = require('./routes/orderHistory');
 const driversRoutes = require('./routes/drivers');
-const accountingRoutes = require('./routes/accounting');
-const accountingEnhancedRoutes = require('./routes/accountingEnhanced');
-const cashboxRoutes = require('./routes/cashbox');
 const priceListRoutes = require('./routes/priceList');
-const transactionsRoutes = require('./routes/transactions');
 const settingsRoutes = require('./routes/settings');
 const analyticsRoutes = require('./routes/analytics');
 const deliveryPricesRoutes = require('./routes/deliveryPrices');
-const paymentsRoutes = require('./routes/payments');
-const clientAccountsRoutes = require('./routes/clientAccounts');
 const priceImportRoutes = require('./routes/priceImport');
+const cashboxRoutes = require('./routes/cashbox');
+const transactionsRoutes = require('./routes/transactions');
+const accountingRoutes = require('./routes/accounting');
+const customersRoutes = require('./routes/customers');
 const { authenticateToken } = require('./middleware/auth');
 
 const app = express();
@@ -56,8 +54,7 @@ const allowedOrigins = [
   "http://localhost:5176",
   "http://127.0.0.1:5173",
   "http://127.0.0.1:5175",
-  "http://127.0.0.1:5176",
-  "https://runners-lb.vercel.app"
+  "http://127.0.0.1:5176"
 ];
 
 function isDevLocalhost(origin) {
@@ -72,7 +69,7 @@ function isDevLocalhost(origin) {
 
 console.log('🌐 CORS allowed origins:', allowedOrigins);
 
-// Socket.IO with strict CORS: exact-match of requesting Origin
+// Socket.IO with strict CORS and connection limits
 const io = socketIo(server, {
   cors: {
     origin: (origin, callback) => {
@@ -82,16 +79,44 @@ const io = socketIo(server, {
       if (isAllowed) return callback(null, true);
       return callback(new Error('Not allowed by CORS'));
     },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
-  }
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "idempotency-key"]
+  },
+  // Connection limits and timeouts
+  maxHttpBufferSize: 1e6, // 1MB
+  pingTimeout: 60000, // 60 seconds
+  pingInterval: 25000, // 25 seconds
+  upgradeTimeout: 10000, // 10 seconds
+  allowEIO3: true,
+  // Rate limiting for connections
+  transports: ['websocket', 'polling'],
+  allowUpgrades: true,
+  // Connection state management
+  serveClient: false,
+  // Memory management
+  destroyUpgrade: true,
+  destroyUpgradeTimeout: 1000
 });
 
-// Rate limiting
+// Rate limiting (configurable via env for local testing)
+const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const rateLimitMax = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 1000); // Increased for development
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  windowMs: rateLimitWindowMs,
+  max: rateLimitMax,
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Health check specific rate limiting (more lenient)
+const healthCheckLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 60, // 60 requests per minute for health checks
+  message: 'Health check rate limit exceeded',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // Middleware
@@ -108,8 +133,8 @@ app.use(cors({
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'idempotency-key'],
   exposedHeaders: ['Set-Cookie']
 }));
 
@@ -124,8 +149,8 @@ app.options('*', cors({
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'idempotency-key'],
   exposedHeaders: ['Set-Cookie']
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -136,26 +161,182 @@ const cookieParser = require('cookie-parser');
 app.use(cookieParser());
 
 // Socket.IO connection handling
+// WebSocket connection management
+const connectedClients = new Map();
+const clientPingTimeouts = new Map();
+const MAX_CONNECTIONS = 100; // Maximum concurrent connections
+const CONNECTION_RATE_LIMIT = 10; // Max connections per minute per IP
+const connectionAttempts = new Map();
+
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  const clientIP = socket.handshake.address;
+  const now = Date.now();
   
+  // Check connection limits
+  if (connectedClients.size >= MAX_CONNECTIONS) {
+    console.log(`Connection rejected: Max connections (${MAX_CONNECTIONS}) reached`);
+    socket.emit('error', { message: 'Server at capacity, please try again later' });
+    socket.disconnect(true);
+    return;
+  }
+  
+  // Rate limiting per IP
+  if (!connectionAttempts.has(clientIP)) {
+    connectionAttempts.set(clientIP, []);
+  }
+  
+  const attempts = connectionAttempts.get(clientIP);
+  const recentAttempts = attempts.filter(time => now - time < 60000); // Last minute
+  
+  if (recentAttempts.length >= CONNECTION_RATE_LIMIT) {
+    console.log(`Connection rejected: Rate limit exceeded for IP ${clientIP}`);
+    socket.emit('error', { message: 'Too many connection attempts, please wait' });
+    socket.disconnect(true);
+    return;
+  }
+  
+  attempts.push(now);
+  connectionAttempts.set(clientIP, attempts);
+  
+  console.log(`Client connected: ${socket.id} from ${clientIP}`);
+  
+  // Track connected client
+  connectedClients.set(socket.id, {
+    id: socket.id,
+    connectedAt: now,
+    lastPing: now,
+    userId: null,
+    rooms: new Set(),
+    ip: clientIP
+  });
+
+  // Set up ping/pong for keep-alive
+  const pingTimeout = setTimeout(() => {
+    console.log(`Client ${socket.id} ping timeout, disconnecting`);
+    socket.disconnect(true);
+  }, 60000); // 60 second timeout
+
+  clientPingTimeouts.set(socket.id, pingTimeout);
+
+  // Handle ping from client
+  socket.on('ping', (timestamp) => {
+    const client = connectedClients.get(socket.id);
+    if (client) {
+      client.lastPing = Date.now();
+      // Reset ping timeout
+      clearTimeout(clientPingTimeouts.get(socket.id));
+      const newTimeout = setTimeout(() => {
+        console.log(`Client ${socket.id} ping timeout, disconnecting`);
+        socket.disconnect(true);
+      }, 60000);
+      clientPingTimeouts.set(socket.id, newTimeout);
+    }
+    socket.emit('pong', timestamp);
+  });
+
+  // Handle authentication
   socket.on('auth', (userId) => {
     if (userId) {
-      const room = `user-${userId}`;
-      socket.join(room);
-      console.log(`Client ${socket.id} joined room: ${room}`);
+      const client = connectedClients.get(socket.id);
+      if (client) {
+        client.userId = userId;
+        const room = `user-${userId}`;
+        socket.join(room);
+        client.rooms.add(room);
+        console.log(`Client ${socket.id} joined room: ${room}`);
+      }
     }
   });
 
+  // Handle room joining
   socket.on('join-room', (room) => {
     socket.join(room);
+    const client = connectedClients.get(socket.id);
+    if (client) {
+      client.rooms.add(room);
+    }
     console.log(`Client ${socket.id} joined room: ${room}`);
   });
-  
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+
+  // Handle room leaving
+  socket.on('leave-room', (room) => {
+    socket.leave(room);
+    const client = connectedClients.get(socket.id);
+    if (client) {
+      client.rooms.delete(room);
+    }
+    console.log(`Client ${socket.id} left room: ${room}`);
+  });
+
+  // Handle errors
+  socket.on('error', (error) => {
+    console.error(`WebSocket error for client ${socket.id}:`, error);
+  });
+
+  // Handle disconnection
+  socket.on('disconnect', (reason) => {
+    console.log(`Client disconnected: ${socket.id}, reason: ${reason}`);
+    
+    // Clean up client data
+    const client = connectedClients.get(socket.id);
+    if (client) {
+      console.log(`Client ${socket.id} was connected for ${Date.now() - client.connectedAt}ms`);
+    }
+    
+    // Clear ping timeout
+    const timeout = clientPingTimeouts.get(socket.id);
+    if (timeout) {
+      clearTimeout(timeout);
+      clientPingTimeouts.delete(socket.id);
+    }
+    
+    // Remove from connected clients
+    connectedClients.delete(socket.id);
+  });
+
+  // Send initial connection confirmation
+  socket.emit('connected', { 
+    id: socket.id, 
+    timestamp: Date.now(),
+    serverTime: new Date().toISOString()
   });
 });
+
+// Periodic cleanup of stale connections and rate limiting data
+setInterval(() => {
+  const now = Date.now();
+  const staleThreshold = 5 * 60 * 1000; // 5 minutes
+  
+  // Clean up stale clients
+  for (const [socketId, client] of connectedClients.entries()) {
+    if (now - client.lastPing > staleThreshold) {
+      console.log(`Cleaning up stale client: ${socketId}`);
+      const socket = io.sockets.sockets.get(socketId);
+      if (socket) {
+        socket.disconnect(true);
+      }
+      connectedClients.delete(socketId);
+      const timeout = clientPingTimeouts.get(socketId);
+      if (timeout) {
+        clearTimeout(timeout);
+        clientPingTimeouts.delete(socketId);
+      }
+    }
+  }
+  
+  // Clean up old connection attempts (older than 5 minutes)
+  for (const [ip, attempts] of connectionAttempts.entries()) {
+    const recentAttempts = attempts.filter(time => now - time < 5 * 60 * 1000);
+    if (recentAttempts.length === 0) {
+      connectionAttempts.delete(ip);
+    } else {
+      connectionAttempts.set(ip, recentAttempts);
+    }
+  }
+  
+  // Log connection stats
+  console.log(`WebSocket stats: ${connectedClients.size} connected, ${connectionAttempts.size} IPs tracked`);
+}, 60000); // Check every minute
 
 // Make io available to routes
 app.set('io', io);
@@ -165,13 +346,34 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// API Health check (for client)
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+// API Health check (for client) - with specific rate limiting
+app.options('/api/health', (req, res) => {
+  // Handle preflight requests
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.status(200).end();
+});
+
+app.get('/api/health', healthCheckLimiter, (req, res) => {
+  // Set CORS headers explicitly
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  res.status(200).json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    server: 'Soufian ERP',
+    version: '1.0.0'
+  });
 });
 
 // Public routes
 app.use('/api/auth', authRoutes);
+app.use('/api/customers', customersRoutes); // Make customers public for order creation
 
 // Protected routes
 app.use('/api/dashboard', authenticateToken, dashboardRoutes);
@@ -182,17 +384,14 @@ app.use('/api/orders/batch', authenticateToken, ordersBatchRoutes);
 app.use('/api/orders/history', authenticateToken, orderHistoryRoutes); // Add alias for order history
 app.use('/api/order-history', authenticateToken, orderHistoryRoutes);
 app.use('/api/drivers', authenticateToken, driversRoutes);
-app.use('/api/accounting', authenticateToken, accountingRoutes);
-app.use('/api/accounting', authenticateToken, accountingEnhancedRoutes);
-app.use('/api/cashbox', authenticateToken, cashboxRoutes);
 app.use('/api/price-list', authenticateToken, priceListRoutes);
-app.use('/api/transactions', authenticateToken, transactionsRoutes);
 app.use('/api/settings', authenticateToken, settingsRoutes);
 app.use('/api/analytics', authenticateToken, analyticsRoutes);
 app.use('/api/delivery-prices', authenticateToken, deliveryPricesRoutes);
-app.use('/api/payments', authenticateToken, paymentsRoutes);
-app.use('/api/client-accounts', authenticateToken, clientAccountsRoutes);
 app.use('/api/price-import', authenticateToken, priceImportRoutes);
+app.use('/api/cashbox', authenticateToken, cashboxRoutes);
+app.use('/api/transactions', authenticateToken, transactionsRoutes);
+app.use('/api/accounting', authenticateToken, accountingRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

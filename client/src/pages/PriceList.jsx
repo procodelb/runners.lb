@@ -7,12 +7,10 @@ import api from '../api';
 
 const PriceList = () => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterCountry, setFilterCountry] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedPrice, setSelectedPrice] = useState(null);
   const [newPrice, setNewPrice] = useState({
-    country: '',
     area: '',
     fee_usd: '',
     fee_lbp: '',
@@ -40,7 +38,6 @@ const PriceList = () => {
         toast.success('Price added successfully!');
         setShowAddModal(false);
         setNewPrice({
-          country: '',
           area: '',
           fee_usd: '',
           fee_lbp: '',
@@ -98,22 +95,47 @@ const PriceList = () => {
   );
 
   const handleAddPrice = () => {
-    if (!newPrice.country || !newPrice.area || (!newPrice.fee_usd && !newPrice.fee_lbp)) {
+    if (!newPrice.area || (!newPrice.fee_usd && !newPrice.fee_lbp)) {
       toast.error('Please fill in all required fields');
       return;
     }
-    addPriceMutation.mutate(newPrice);
+    const toNumber = (v, int = false) => {
+      const s = String(v ?? '').replace(/,/g, '').trim();
+      const n = Number(s);
+      if (!Number.isFinite(n)) return 0;
+      return int ? Math.round(n) : Math.round(n * 100) / 100;
+    };
+    const payload = {
+      area: newPrice.area,
+      fee_usd: toNumber(newPrice.fee_usd, false),
+      fee_lbp: toNumber(newPrice.fee_lbp, true),
+      third_party_fee_usd: toNumber(newPrice.third_party_fee_usd, false),
+      third_party_fee_lbp: toNumber(newPrice.third_party_fee_lbp, true),
+      is_active: !!newPrice.is_active
+    };
+    addPriceMutation.mutate(payload);
   };
 
   const handleEditPrice = () => {
-    if (!selectedPrice.country || !selectedPrice.area || (!selectedPrice.fee_usd && !selectedPrice.fee_lbp)) {
+    if (!selectedPrice.area || (!selectedPrice.fee_usd && !selectedPrice.fee_lbp)) {
       toast.error('Please fill in all required fields');
       return;
     }
-    updatePriceMutation.mutate({
-      id: selectedPrice.id,
-      data: selectedPrice
-    });
+    const toNumber = (v, int = false) => {
+      const s = String(v ?? '').replace(/,/g, '').trim();
+      const n = Number(s);
+      if (!Number.isFinite(n)) return 0;
+      return int ? Math.round(n) : Math.round(n * 100) / 100;
+    };
+    const data = {
+      area: selectedPrice.area,
+      fee_usd: toNumber(selectedPrice.fee_usd, false),
+      fee_lbp: toNumber(selectedPrice.fee_lbp, true),
+      third_party_fee_usd: toNumber(selectedPrice.third_party_fee_usd, false),
+      third_party_fee_lbp: toNumber(selectedPrice.third_party_fee_lbp, true),
+      is_active: !!selectedPrice.is_active
+    };
+    updatePriceMutation.mutate({ id: selectedPrice.id, data });
   };
 
   const handleDeletePrice = (id) => {
@@ -136,13 +158,9 @@ const PriceList = () => {
 
   // prices is already the array due to select above
   const filteredPrices = (prices || []).filter(price => {
-    const matchesSearch = price.country.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         price.area.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCountry = !filterCountry || price.country === filterCountry;
-    return matchesSearch && matchesCountry;
+    const matchesSearch = price.area.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesSearch;
   }) || [];
-
-  const countries = [...new Set((Array.isArray(prices) ? prices : []).map(price => price.country).filter(Boolean))];
 
   if (isLoading) {
     return (
@@ -176,7 +194,7 @@ const PriceList = () => {
       >
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Price List</h1>
-          <p className="text-gray-600 mt-2">Manage delivery fees for different countries and areas</p>
+          <p className="text-gray-600 mt-2">Manage delivery fees for different areas</p>
         </div>
         <div className="flex items-center space-x-3">
           <button
@@ -201,7 +219,7 @@ const PriceList = () => {
           <h3 className="text-lg font-semibold text-gray-900">Filters</h3>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Search
@@ -210,7 +228,7 @@ const PriceList = () => {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search by country or area..."
+                placeholder="Search by area..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -218,27 +236,10 @@ const PriceList = () => {
             </div>
           </div>
           
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Country
-            </label>
-            <select
-              value={filterCountry}
-              onChange={(e) => setFilterCountry(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">All Countries</option>
-              {countries.map(country => (
-                <option key={country} value={country}>{country}</option>
-              ))}
-            </select>
-          </div>
-          
           <div className="flex items-end">
             <button
               onClick={() => {
                 setSearchTerm('');
-                setFilterCountry('');
               }}
               className="w-full px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
             >
@@ -304,15 +305,11 @@ const PriceList = () => {
                       <div className="flex items-center space-x-3">
                         <div className="flex-shrink-0">
                           <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                            <Globe className="h-4 w-4 text-blue-600" />
+                            <MapPin className="h-4 w-4 text-blue-600" />
                           </div>
                         </div>
                         <div>
-                          <div className="text-sm font-medium text-gray-900">{price.country}</div>
-                          <div className="text-sm text-gray-500 flex items-center">
-                            <MapPin className="h-3 w-3 mr-1" />
-                            {price.area}
-                          </div>
+                          <div className="text-sm font-medium text-gray-900">{price.area}</div>
                         </div>
                       </div>
                     </td>
@@ -426,19 +423,6 @@ const PriceList = () => {
               </div>
               
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Country *
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., Lebanon, UAE, Saudi Arabia"
-                    value={newPrice.country}
-                    onChange={(e) => setNewPrice(prev => ({ ...prev, country: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Area *
@@ -568,18 +552,6 @@ const PriceList = () => {
               </div>
               
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Country *
-                  </label>
-                  <input
-                    type="text"
-                    value={selectedPrice.country}
-                    onChange={(e) => setSelectedPrice(prev => ({ ...prev, country: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Area *

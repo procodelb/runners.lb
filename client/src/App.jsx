@@ -15,13 +15,12 @@ import Dashboard from './pages/Dashboard';
 import CRM from './pages/CRM';
 import Orders from './pages/Orders';
 import Drivers from './pages/Drivers';
-import Accounting from './pages/Accounting';
-import NewAccounting from './pages/NewAccounting';
-import './styles/accounting.css';
-import Cashbox from './pages/Cashbox';
 import PriceList from './pages/PriceList';
 import OrderHistory from './pages/OrderHistory';
 import Settings from './pages/Settings';
+import Cashbox from './pages/Cashbox';
+import Reports from './pages/Reports';
+import Accounting from './pages/Accounting';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -116,20 +115,29 @@ const DebugAuth = () => {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const apiBase = (import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}` : 'https://soufiam-erp-backend.onrender.com');
-        const response = await fetch(`${apiBase}/api/health`);
+        // Force localhost for development
+        const apiBase = 'http://localhost:5000';
+        console.log('🔍 Health check using API base:', apiBase);
+        const response = await fetch(`${apiBase}/api/health`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include'
+        });
         if (response.ok) {
           setApiHealth('healthy');
         } else {
           setApiHealth('error');
         }
       } catch (error) {
+        console.warn('Health check failed:', error);
         setApiHealth('unreachable');
       }
     };
     
     checkHealth();
-    const interval = setInterval(checkHealth, 10000); // Check every 10 seconds
+    const interval = setInterval(checkHealth, 30000); // Check every 30 seconds (reduced frequency)
     return () => clearInterval(interval);
   }, []);
   
@@ -179,42 +187,86 @@ const AppContent = () => {
   useEffect(() => {
     if (user && isAuthenticated) {
       console.log('🔌 AppContent: User authenticated, initializing Socket.IO...');
-      // Resolve Socket.IO base URL similar to API logic
-      let socketBase = import.meta.env.VITE_API_URL;
-      try {
-        if (!socketBase && typeof window !== 'undefined') {
-          const hostname = window.location.hostname;
-          if (hostname === 'localhost' || hostname === '127.0.0.1') {
-            socketBase = 'http://localhost:5000';
-          } else if (hostname.includes('vercel.app')) {
-            socketBase = 'https://soufiam-erp-backend.onrender.com';
-          } else {
-            socketBase = 'https://soufiam-erp-backend.onrender.com';
-          }
-        }
-      } catch {}
+      // Force localhost for development
+      let socketBase = 'http://localhost:5000';
+      console.log('🔌 Socket connecting to:', socketBase);
 
       // Initialize Socket.IO connection
       const newSocket = io(socketBase, {
         withCredentials: true,
         auth: {
           token: localStorage.getItem('token')
-        }
+        },
+        autoConnect: true,
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: Infinity, // Keep trying to reconnect
+        timeout: 20000,
+        forceNew: false,
+        transports: ['websocket', 'polling']
       });
 
       newSocket.on('connect', () => {
         console.log('✅ Socket.IO connected to server');
       });
 
-      newSocket.on('disconnect', () => {
-        console.log('❌ Socket.IO disconnected from server');
+      newSocket.on('disconnect', (reason) => {
+        console.log('❌ Socket.IO disconnected from server:', reason);
+        
+        // Only show error for unexpected disconnects, not intentional ones
+        if (reason === 'io server disconnect') {
+          // Server intentionally disconnected - don't reconnect automatically
+          console.log('Server intentionally disconnected the client');
+        } else if (reason === 'io client disconnect') {
+          // Client intentionally disconnected - this is normal
+          console.log('Client intentionally disconnected');
+        } else {
+          // Network issues or other errors - reconnect automatically
+          console.log('Unexpected disconnect, will attempt to reconnect...');
+        }
+      });
+
+      newSocket.on('connect_error', (error) => {
+        console.error('❌ Socket.IO connection error:', error);
+        // Suppress runtime.lastError by handling the error gracefully
+        if (error.message) {
+          console.log('Socket connection failed:', error.message);
+        }
+      });
+
+      newSocket.on('error', (error) => {
+        console.error('❌ Socket.IO error:', error);
+        // Suppress runtime.lastError by handling the error gracefully
+        if (error.message) {
+          console.log('Socket error:', error.message);
+        }
+      });
+
+      // Handle reconnection events
+      newSocket.on('reconnect', (attemptNumber) => {
+        console.log('✅ Socket.IO reconnected after', attemptNumber, 'attempts');
+      });
+
+      newSocket.on('reconnect_error', (error) => {
+        console.error('❌ Socket.IO reconnection error:', error);
+      });
+
+      newSocket.on('reconnect_failed', () => {
+        console.error('❌ Socket.IO reconnection failed - giving up');
+      });
+
+      // Handle ping/pong for keep-alive
+      newSocket.on('ping', (timestamp) => {
+        console.log('🏓 Received ping from server:', timestamp);
+        newSocket.emit('pong', timestamp);
       });
 
       setSocket(newSocket);
 
       return () => {
         console.log('🔌 AppContent: Cleaning up Socket.IO connection...');
-        newSocket.close();
+        newSocket.disconnect();
       };
     } else {
       console.log('👤 AppContent: No user or not authenticated, skipping Socket.IO initialization...');
@@ -273,6 +325,19 @@ const AppContent = () => {
               return <Navigate to="/dashboard" replace />; 
             })()
           } />
+          
+          {/* Accounting Route - No Authentication Required */}
+          <Route path="/accounting" element={
+            (() => { 
+              console.log('💰 AppContent: Rendering accounting route'); 
+              return (
+                <Layout>
+                  <Accounting />
+                </Layout>
+              ); 
+            })()
+          } />
+          
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={
               (() => { 
@@ -314,26 +379,6 @@ const AppContent = () => {
                 ); 
               })()
             } />
-            <Route path="/accounting" element={
-              (() => { 
-                console.log('💰 AppContent: Rendering accounting route'); 
-                return (
-                  <Layout>
-                    <NewAccounting />
-                  </Layout>
-                ); 
-              })()
-            } />
-            <Route path="/cashbox" element={
-              (() => { 
-                console.log('💼 AppContent: Rendering cashbox route'); 
-                return (
-                  <Layout>
-                    <Cashbox />
-                  </Layout>
-                ); 
-              })()
-            } />
             <Route path="/price-list" element={
               (() => { 
                 console.log('📋 AppContent: Rendering price list route'); 
@@ -350,6 +395,26 @@ const AppContent = () => {
                 return (
                   <Layout>
                     <OrderHistory />
+                  </Layout>
+                ); 
+              })()
+            } />
+            <Route path="/cashbox" element={
+              (() => { 
+                console.log('💰 AppContent: Rendering cashbox route'); 
+                return (
+                  <Layout>
+                    <Cashbox />
+                  </Layout>
+                ); 
+              })()
+            } />
+            <Route path="/reports" element={
+              (() => { 
+                console.log('📊 AppContent: Rendering reports route'); 
+                return (
+                  <Layout>
+                    <Reports />
                   </Layout>
                 ); 
               })()

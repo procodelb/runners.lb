@@ -6,11 +6,11 @@ export function toNumber(value, precision) {
 }
 
 // Keep in sync with server/utils/computeDisplayedAmounts.js
-export function computeDisplayAmounts(order) {
+export function computeDisplayAmounts(order, context = 'client') {
   const totalUSD = toNumber(order.total_usd, 2);
   const totalLBP = toNumber(order.total_lbp, 0);
-  const deliveryFeesUSD = toNumber(order.delivery_fee_usd || order.delivery_fees_usd, 2);
-  const deliveryFeesLBP = toNumber(order.delivery_fee_lbp || order.delivery_fees_lbp, 0);
+  const deliveryFeesUSD = toNumber(order.delivery_fee_usd, 2);
+  const deliveryFeesLBP = toNumber(order.delivery_fee_lbp, 0);
   const thirdPartyFeesUSD = toNumber(order.third_party_fee_usd, 2);
   const thirdPartyFeesLBP = toNumber(order.third_party_fee_lbp, 0);
   const driverFeeUSD = toNumber(order.driver_fee_usd, 2);
@@ -45,8 +45,16 @@ export function computeDisplayAmounts(order) {
     if (!isInstant) {
       displayedTotalUSD = totalUSD + deliveryFeesUSD + thirdPartyFeesUSD;
       displayedTotalLBP = totalLBP + deliveryFeesLBP + thirdPartyFeesLBP;
-      deliveryFeesShownUSD = deliveryFeesUSD + thirdPartyFeesUSD;
-      deliveryFeesShownLBP = deliveryFeesLBP + thirdPartyFeesLBP;
+      
+      // For client context: show only own delivery fees
+      // For accounting context: show both own and third party fees
+      if (context === 'client') {
+        deliveryFeesShownUSD = deliveryFeesUSD;
+        deliveryFeesShownLBP = deliveryFeesLBP;
+      } else {
+        deliveryFeesShownUSD = deliveryFeesUSD + thirdPartyFeesUSD;
+        deliveryFeesShownLBP = deliveryFeesLBP + thirdPartyFeesLBP;
+      }
     } else {
       displayedTotalUSD = totalUSD + driverFeeUSD + thirdPartyFeesUSD;
       displayedTotalLBP = totalLBP + driverFeeLBP + thirdPartyFeesLBP;

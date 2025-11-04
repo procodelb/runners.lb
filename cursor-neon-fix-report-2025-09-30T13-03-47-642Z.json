@@ -1,0 +1,53 @@
+{
+  "startedAt": "2025-09-30T13:03:47.643Z",
+  "dbUrlMasked": "unknown",
+  "steps": [
+    {
+      "name": "health",
+      "ok": true,
+      "data": {
+        "status": "ok",
+        "timestamp": "2025-09-30T13:03:47.704Z"
+      }
+    },
+    {
+      "name": "auth",
+      "ok": true,
+      "data": {
+        "mode": "login",
+        "ok": true
+      }
+    },
+    {
+      "name": "price-list",
+      "ok": true,
+      "data": {
+        "count": 20,
+        "sampleTypes": {
+          "fee_usd": "string",
+          "fee_lbp": "string",
+          "third_party_fee_usd": "string",
+          "third_party_fee_lbp": "string"
+        }
+      }
+    },
+    {
+      "name": "create-order",
+      "ok": true,
+      "data": {
+        "id": 86,
+        "computed_total_usd": "12.50",
+        "computed_total_lbp": "0"
+      }
+    },
+    {
+      "name": "accounting-thirdparty",
+      "ok": true,
+      "data": {
+        "count": 0
+      }
+    }
+  ],
+  "success": true,
+  "finishedAt": "2025-09-30T13:03:52.353Z"
+}

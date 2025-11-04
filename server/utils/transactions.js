@@ -1,17 +1,35 @@
 const pool = require('../config/database');
+const { currentDatabase } = require('../config/database');
 
 // Get current exchange rate
 const getCurrentExchangeRate = async () => {
   try {
-    const result = await pool.query(
-      'SELECT rate_usd_to_lbp FROM exchange_rates WHERE active = true ORDER BY created_at DESC LIMIT 1'
-    );
+    const dbType = currentDatabase();
+    let result;
     
-    if (result.rows.length === 0) {
-      return 89000; // Default rate if none found
+    if (dbType === 'postgresql') {
+      // PostgreSQL schema: id, lbp_per_usd, effective_at (NO active or created_at columns)
+      result = await pool.query(
+        'SELECT lbp_per_usd FROM exchange_rates ORDER BY effective_at DESC LIMIT 1'
+      );
+      
+      if (result.rows.length === 0) {
+        return 89000; // Default rate if none found
+      }
+      
+      return parseFloat(result.rows[0].lbp_per_usd);
+    } else {
+      // MySQL/SQLite fallback - these may have rate_usd_to_lbp, active, created_at
+      result = await pool.query(
+        'SELECT rate_usd_to_lbp FROM exchange_rates WHERE active = true ORDER BY created_at DESC LIMIT 1'
+      );
+      
+      if (result.rows.length === 0) {
+        return 89000; // Default rate if none found
+      }
+      
+      return parseFloat(result.rows[0].rate_usd_to_lbp);
     }
-    
-    return parseFloat(result.rows[0].rate_usd_to_lbp);
   } catch (error) {
     console.error('Error getting exchange rate:', error);
     return 89000; // Default fallback

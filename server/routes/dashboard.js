@@ -7,29 +7,29 @@ const router = express.Router();
 router.get('/stats', authenticateToken, async (req, res) => {
   try {
     // Get total orders
-    const totalOrdersQuery = 'SELECT COUNT(*) as total_orders FROM orders';
+    const totalOrdersQuery = 'SELECT COUNT(*)::int as total_orders FROM orders';
     const totalOrdersResult = await query(totalOrdersQuery);
-    const totalOrders = totalOrdersResult[0]?.total_orders || 0;
+    const totalOrders = parseInt(totalOrdersResult[0]?.total_orders) || 0;
 
     // Get pending orders
-    const pendingOrdersQuery = "SELECT COUNT(*) as pending_orders FROM orders WHERE status IN ('new','pending')";
+    const pendingOrdersQuery = "SELECT COUNT(*)::int as pending_orders FROM orders WHERE status IN ('new','pending')";
     const pendingOrdersResult = await query(pendingOrdersQuery);
-    const pendingOrders = pendingOrdersResult[0]?.pending_orders || 0;
+    const pendingOrders = parseInt(pendingOrdersResult[0]?.pending_orders) || 0;
 
     // Get completed orders
-    const completedOrdersQuery = "SELECT COUNT(*) as completed_orders FROM orders WHERE status = 'completed'";
+    const completedOrdersQuery = "SELECT COUNT(*)::int as completed_orders FROM orders WHERE status = 'completed'";
     const completedOrdersResult = await query(completedOrdersQuery);
-    const completedOrders = completedOrdersResult[0]?.completed_orders || 0;
+    const completedOrders = parseInt(completedOrdersResult[0]?.completed_orders) || 0;
 
     // Get total clients
-    const totalClientsQuery = 'SELECT COUNT(*) as total_clients FROM clients';
+    const totalClientsQuery = 'SELECT COUNT(*)::int as total_clients FROM clients';
     const totalClientsResult = await query(totalClientsQuery);
-    const totalClients = totalClientsResult[0]?.total_clients || 0;
+    const totalClients = parseInt(totalClientsResult[0]?.total_clients) || 0;
 
     // Get active drivers
-    const activeDriversQuery = 'SELECT COUNT(*) as active_drivers FROM drivers WHERE active = true';
+    const activeDriversQuery = 'SELECT COUNT(*)::int as active_drivers FROM drivers WHERE active = true';
     const activeDriversResult = await query(activeDriversQuery);
-    const activeDrivers = activeDriversResult[0]?.active_drivers || 0;
+    const activeDrivers = parseInt(activeDriversResult[0]?.active_drivers) || 0;
 
     // Get total revenue from delivery fees (company revenue)
     const totalRevenueQuery = `
@@ -80,21 +80,21 @@ router.get('/stats', authenticateToken, async (req, res) => {
 
     // Get orders completed today
     const ordersCompletedTodayQuery = `
-      SELECT COUNT(*) as orders_completed_today
+      SELECT COUNT(*)::int as orders_completed_today
       FROM orders 
       WHERE status = 'completed' AND DATE(completed_at) = CURRENT_DATE
     `;
     const ordersCompletedTodayResult = await query(ordersCompletedTodayQuery);
-    const ordersCompletedToday = ordersCompletedTodayResult[0]?.orders_completed_today || 0;
+    const ordersCompletedToday = parseInt(ordersCompletedTodayResult[0]?.orders_completed_today) || 0;
 
     // Get orders completed this month
     const ordersCompletedThisMonthQuery = `
-      SELECT COUNT(*) as orders_completed_this_month
+      SELECT COUNT(*)::int as orders_completed_this_month
       FROM orders 
       WHERE status = 'completed' AND DATE_TRUNC('month', completed_at) = DATE_TRUNC('month', CURRENT_DATE)
     `;
     const ordersCompletedThisMonthResult = await query(ordersCompletedThisMonthQuery);
-    const ordersCompletedThisMonth = ordersCompletedThisMonthResult[0]?.orders_completed_this_month || 0;
+    const ordersCompletedThisMonth = parseInt(ordersCompletedThisMonthResult[0]?.orders_completed_this_month) || 0;
 
     // Get current cashbox balance
     const cashboxBalanceQuery = `
@@ -105,9 +105,10 @@ router.get('/stats', authenticateToken, async (req, res) => {
       WHERE id = 1
     `;
     const cashboxBalanceResult = await query(cashboxBalanceQuery);
+    const cashboxBalanceRow = cashboxBalanceResult[0];
     const cashboxBalance = {
-      usd: parseFloat(cashboxBalanceResult[0]?.balance_usd) || 0,
-      lbp: parseInt(cashboxBalanceResult[0]?.balance_lbp) || 0
+      usd: cashboxBalanceRow ? (parseFloat(cashboxBalanceRow.balance_usd) || 0) : 0,
+      lbp: cashboxBalanceRow ? (parseInt(cashboxBalanceRow.balance_lbp) || 0) : 0
     };
 
     // Get pending payments
@@ -295,7 +296,7 @@ router.get('/process-timeline', authenticateToken, async (req, res) => {
       LIMIT $1
     `;
     
-    const ordersResult = await query(recentOrdersQuery, [limit]);
+    const ordersResult = await query(recentOrdersQuery, [parseInt(limit)]);
 
     // Get recent transactions
     const recentTransactionsQuery = `
@@ -317,7 +318,7 @@ router.get('/process-timeline', authenticateToken, async (req, res) => {
       LIMIT $1
     `;
     
-    const transactionsResult = await query(recentTransactionsQuery, [limit]);
+    const transactionsResult = await query(recentTransactionsQuery, [parseInt(limit)]);
 
     // Get recent cashbox entries
     const recentCashboxQuery = `
@@ -338,7 +339,7 @@ router.get('/process-timeline', authenticateToken, async (req, res) => {
       LIMIT $1
     `;
     
-    const cashboxResult = await query(recentCashboxQuery, [limit]);
+    const cashboxResult = await query(recentCashboxQuery, [parseInt(limit)]);
 
     // Combine and sort all activities by timestamp
     const allActivities = [

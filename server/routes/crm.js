@@ -12,6 +12,7 @@ router.get('/', authenticateToken, async (req, res) => {
       limit = 20, 
       search = '', 
       category = '',
+      client_type = '',
       sortBy = 'created_at',
       sortOrder = 'DESC'
     } = req.query;
@@ -23,13 +24,18 @@ router.get('/', authenticateToken, async (req, res) => {
     let filterParams = [];
 
     if (search) {
-      filterConditions.push(`(business_name LIKE ? OR contact_person LIKE ? OR phone LIKE ?)`);
-      filterParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      filterConditions.push(`(business_name LIKE ? OR contact_person LIKE ? OR phone LIKE ? OR client_type LIKE ?)`);
+      filterParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     if (category) {
       filterConditions.push(`category = ?`);
       filterParams.push(category);
+    }
+
+    if (client_type) {
+      filterConditions.push(`client_type = ?`);
+      filterParams.push(client_type);
     }
 
     const whereClause = filterConditions.length > 0 
@@ -72,10 +78,57 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
+// Search clients - MUST come before /:id route
+router.get('/search/:query', authenticateToken, async (req, res) => {
+  try {
+    const { query: searchQuery } = req.params;
+    
+    const searchSql = `
+      SELECT 
+        id,
+        business_name,
+        contact_person,
+        phone,
+        address,
+        instagram,
+        website,
+        google_location,
+        category,
+        COALESCE(client_type, 'BUSINESS') as client_type
+      FROM clients 
+      WHERE business_name LIKE ? OR contact_person LIKE ? OR phone LIKE ?
+      ORDER BY business_name
+      LIMIT 10
+    `;
+    
+    const result = await query(searchSql, [`%${searchQuery}%`, `%${searchQuery}%`, `%${searchQuery}%`]);
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error searching clients:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to search clients',
+      error: error.message 
+    });
+  }
+});
+
 // Get single client
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate that id is a number to prevent search parameter confusion
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid client ID. ID must be a number.' 
+      });
+    }
     
     const clientQuery = 'SELECT * FROM clients WHERE id = ?';
     const result = await query(clientQuery, [id]);
@@ -105,40 +158,50 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
-      business_name,
+      client_type, // 'BUSINESS' or 'INDIVIDUAL'
+      business_name, // For BUSINESS type
+      client_name, // For INDIVIDUAL type (will be stored as business_name)
       contact_person,
       phone,
       address,
       instagram,
       website,
-      google_location_lat,
-      google_location_lng,
-      google_location,
-      category
+      google_map_link,
+      category // Only for BUSINESS type
     } = req.body;
 
-    if (!business_name) {
+    if (!client_type || !['BUSINESS', 'INDIVIDUAL'].includes(client_type)) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Business name is required' 
+        message: 'Client type is required and must be BUSINESS or INDIVIDUAL' 
       });
     }
 
-    // Handle Google location - use provided google_location or combine lat/lng
-    const finalGoogleLocation = google_location || (google_location_lat && google_location_lng 
-      ? `${google_location_lat},${google_location_lng}` 
-      : '');
+    if (client_type === 'BUSINESS' && !business_name) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Business name is required for BUSINESS clients' 
+      });
+    }
+
+    if (client_type === 'INDIVIDUAL' && !client_name) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Client name is required for INDIVIDUAL clients' 
+      });
+    }
 
     // Use MCP layer for client creation
     const clientData = {
-      business_name,
+      client_type,
+      business_name: client_type === 'BUSINESS' ? business_name : client_name,
       contact_person: contact_person || '',
       phone: phone || '',
       address: address || '',
       instagram: instagram || '',
       website: website || '',
-      google_location: finalGoogleLocation,
-      category: category || ''
+      google_location: google_map_link || '',
+      category: client_type === 'BUSINESS' ? (category || '') : ''
     };
 
     const result = await mcp.create('clients', clientData);
@@ -166,13 +229,27 @@ router.post('/', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate that id is a number
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid client ID. ID must be a number.' 
+      });
+    }
+    
     const updateData = { ...req.body };
 
     // Remove fields that shouldn't be updated
     delete updateData.id;
     delete updateData.created_at;
 
-    // Handle Google location fields
+    // Handle Google location fields - map google_map_link to google_location
+    if (updateData.google_map_link) {
+      updateData.google_location = updateData.google_map_link;
+      delete updateData.google_map_link;
+    }
+    
     if (updateData.google_location_lat || updateData.google_location_lng) {
       updateData.google_location = updateData.google_location_lat && updateData.google_location_lng 
         ? `${updateData.google_location_lat},${updateData.google_location_lng}` 
@@ -215,6 +292,14 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Validate that id is a number
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid client ID. ID must be a number.' 
+      });
+    }
+    
     // Use MCP layer for delete
     await mcp.delete('clients', id);
 
@@ -227,34 +312,6 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to delete client',
-      error: error.message 
-    });
-  }
-});
-
-// Search clients
-router.get('/search/:query', authenticateToken, async (req, res) => {
-  try {
-    const { query: searchQuery } = req.params;
-    
-    const searchSql = `
-      SELECT * FROM clients 
-      WHERE business_name LIKE ? OR contact_person LIKE ? OR phone LIKE ?
-      ORDER BY business_name
-      LIMIT 10
-    `;
-    
-    const result = await query(searchSql, [`%${searchQuery}%`, `%${searchQuery}%`, `%${searchQuery}%`]);
-
-    res.json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    console.error('Error searching clients:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to search clients',
       error: error.message 
     });
   }

@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: soufiam_postgres
+    environment:
+      POSTGRES_USER: soufiam
+      POSTGRES_PASSWORD: soufiam123
+      POSTGRES_DB: soufiam_erp
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U soufiam"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: soufiam_backend
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://soufiam:soufiam123@postgres:5432/soufiam_erp
+      JWT_SECRET: your-secret-key-change-in-production
+      PORT: 5000
+      FRONTEND_URL: http://localhost:5173
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./server:/app/server
+      - ./server/node_modules:/app/server/node_modules
+    command: npm run server:dev
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: soufiam_frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:5000
+      VITE_SOCKET_URL: http://localhost:5000
+    depends_on:
+      - backend
+    volumes:
+      - ./client:/app/client
+      - ./client/node_modules:/app/client/node_modules
+
+volumes:
+  postgres_data:
+

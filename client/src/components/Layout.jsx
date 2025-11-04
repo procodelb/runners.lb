@@ -20,13 +20,15 @@ import {
   Globe,
   User,
   Bell,
-  Search
+  Search,
+  List,
+  ChevronLeft,
+  BarChart3
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { apiHelpers } from '../api';
 import toast from 'react-hot-toast';
-import SidebarToggleButton from './SidebarToggleButton';
 
 const Layout = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -54,6 +56,7 @@ const Layout = ({ children }) => {
     { name: 'Cashbox', href: '/cashbox', icon: Wallet },
     { name: 'Price List', href: '/price-list', icon: DollarSign },
     { name: 'Order History', href: '/order-history', icon: History },
+    { name: 'Reports', href: '/reports', icon: BarChart3 },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
 
@@ -120,12 +123,23 @@ const Layout = ({ children }) => {
             </div>
             <h1 className="text-xl font-bold text-white">Soufian ERP</h1>
           </div>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden p-2 rounded-md hover:bg-sidebar-800 text-white"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center space-x-2">
+            {/* Hide sidebar button - desktop */}
+            <button
+              onClick={() => setSidebarVisible(false)}
+              className="hidden lg:block p-2 rounded-md hover:bg-sidebar-800 text-white"
+              title="Hide sidebar"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            {/* Close mobile sidebar button */}
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="lg:hidden p-2 rounded-md hover:bg-sidebar-800 text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Navigation */}
@@ -185,17 +199,29 @@ const Layout = ({ children }) => {
       </AnimatePresence>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${!sidebarVisible ? 'lg:ml-0' : ''}`}>
         {/* Header */}
         <header className="sticky top-0 z-40 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-soft">
           <div className="flex items-center justify-between h-16 px-4 sm:px-6 lg:px-8">
-            {/* Mobile menu button */}
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300"
-            >
-              <Menu className="w-6 h-6" />
-            </button>
+            <div className="flex items-center space-x-3">
+              {/* Show sidebar button when hidden - desktop */}
+              {!sidebarVisible && (
+                <button
+                  onClick={() => setSidebarVisible(true)}
+                  className="hidden lg:block p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors"
+                  title="Show sidebar"
+                >
+                  <List className="w-5 h-5" />
+                </button>
+              )}
+              {/* Mobile menu button */}
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300"
+              >
+                <Menu className="w-6 h-6" />
+              </button>
+            </div>
 
             {/* Search */}
             <div className="flex-1 max-w-lg mx-4">
@@ -213,10 +239,6 @@ const Layout = ({ children }) => {
 
             {/* Right side actions */}
             <div className="flex items-center space-x-4">
-              <SidebarToggleButton
-                sidebarVisible={sidebarVisible}
-                onToggle={() => setSidebarVisible(v => !v)}
-              />
               {/* Connection status */}
               <div className="flex items-center space-x-2">
                 <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-accent-green' : 'bg-accent-red'}`} />
@@ -266,8 +288,8 @@ const Layout = ({ children }) => {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900" style={{ minHeight: 'calc(100vh - 64px)' }}>
-          <div className="p-4 sm:p-6 lg:p-8 min-h-full">
+        <main className={`flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900 transition-all duration-300 ${!sidebarVisible ? 'w-full' : ''}`} style={{ minHeight: 'calc(100vh - 64px)' }}>
+          <div className={`p-4 sm:p-6 lg:p-8 min-h-full transition-all duration-300 ${!sidebarVisible ? 'max-w-none' : ''}`}>
             <AnimatePresence mode="wait">
               <motion.div
                 key={location.pathname}

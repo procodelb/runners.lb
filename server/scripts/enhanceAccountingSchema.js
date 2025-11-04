@@ -1,262 +1,384 @@
-const { Pool } = require('pg');
-
-// Set environment variables for Neon
-process.env.USE_SQLITE = 'false';
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://neondb_owner:npg_wieBPlL4S8Hc@ep-odd-breeze-adojmdlg-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
-
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-    sslmode: 'require'
-  }
-});
+const { query, run } = require('../config/database');
 
 async function enhanceAccountingSchema() {
   console.log('🔧 Enhancing database schema for comprehensive accounting module...');
+  
+  // Wait for database initialization
+  let attempts = 0;
+  const maxAttempts = 30;
+  while (attempts < maxAttempts) {
+    try {
+      await query('SELECT 1');
+      break;
+    } catch (error) {
+      attempts++;
+      if (attempts >= maxAttempts) {
+        throw new Error('Database initialization timeout');
+      }
+      console.log(`⏳ Waiting for database initialization... (${attempts}/${maxAttempts})`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
 
-  // 1. Add missing columns to transactions table
-  console.log('📋 Enhancing transactions table...');
-  await pool.query(`
-    ALTER TABLE transactions 
-    ADD COLUMN IF NOT EXISTS direction TEXT CHECK (direction IN ('credit', 'debit')),
-    ADD COLUMN IF NOT EXISTS category TEXT,
-    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
-  `);
-
-  // 2. Create order_history table for cashout records
-  console.log('📋 Creating order_history table...');
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS order_history (
-      id SERIAL PRIMARY KEY,
-      order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
-      client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
-      driver_id INTEGER REFERENCES drivers(id) ON DELETE SET NULL,
-      action_type TEXT NOT NULL CHECK (action_type IN ('cashout', 'payment', 'delivery', 'cancellation')),
-      amount_usd NUMERIC(12,2) DEFAULT 0,
-      amount_lbp BIGINT DEFAULT 0,
-      description TEXT,
-      transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
-      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ DEFAULT now()
-    );
-  `);
-
-  // 3. Create accounting_snapshots table for cashout records
-  console.log('📋 Creating accounting_snapshots table...');
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS accounting_snapshots (
-      id SERIAL PRIMARY KEY,
-      entity_type TEXT NOT NULL CHECK (entity_type IN ('client', 'driver', 'third_party')),
-      entity_id INTEGER NOT NULL,
-      snapshot_type TEXT NOT NULL CHECK (snapshot_type IN ('cashout', 'balance_check', 'monthly_summary')),
-      total_orders INTEGER DEFAULT 0,
-      total_amount_usd NUMERIC(12,2) DEFAULT 0,
-      total_amount_lbp BIGINT DEFAULT 0,
-      total_fees_usd NUMERIC(12,2) DEFAULT 0,
-      total_fees_lbp BIGINT DEFAULT 0,
-      net_balance_usd NUMERIC(12,2) DEFAULT 0,
-      net_balance_lbp BIGINT DEFAULT 0,
-      snapshot_data JSONB,
-      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ DEFAULT now()
-    );
-  `);
-
-  // 4. Create third_party_orders table for tracking third-party operations
-  console.log('📋 Creating third_party_orders table...');
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS third_party_orders (
-      id SERIAL PRIMARY KEY,
-      order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
-      third_party_name TEXT NOT NULL,
-      third_party_fee_usd NUMERIC(10,2) DEFAULT 0,
-      third_party_fee_lbp BIGINT DEFAULT 0,
-      our_share_usd NUMERIC(10,2) DEFAULT 0,
-      our_share_lbp BIGINT DEFAULT 0,
-      delivery_fee_usd NUMERIC(10,2) DEFAULT 0,
-      delivery_fee_lbp BIGINT DEFAULT 0,
-      status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
-      notes TEXT,
-      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ DEFAULT now(),
-      updated_at TIMESTAMPTZ DEFAULT now()
-    );
-  `);
-
-  // 5. Create driver_operations table for tracking driver activities
-  console.log('📋 Creating driver_operations table...');
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS driver_operations (
-      id SERIAL PRIMARY KEY,
-      driver_id INTEGER REFERENCES drivers(id) ON DELETE CASCADE,
-      order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-      operation_type TEXT NOT NULL CHECK (operation_type IN ('delivery', 'purchase', 'fuel_expense', 'maintenance', 'other')),
-      amount_usd NUMERIC(10,2) DEFAULT 0,
-      amount_lbp BIGINT DEFAULT 0,
-      description TEXT,
-      status TEXT DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'cancelled')),
-      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ DEFAULT now()
-    );
-  `);
-
-  // 6. Create client_accounts table for detailed client tracking
-  console.log('📋 Creating client_accounts table...');
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS client_accounts (
-      id SERIAL PRIMARY KEY,
-      client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
-      order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-      transaction_type TEXT NOT NULL CHECK (transaction_type IN ('order_placed', 'payment_received', 'refund_issued', 'fee_charged')),
-      amount_usd NUMERIC(12,2) DEFAULT 0,
-      amount_lbp BIGINT DEFAULT 0,
-      balance_usd NUMERIC(12,2) DEFAULT 0,
-      balance_lbp BIGINT DEFAULT 0,
-      description TEXT,
-      transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
-      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ DEFAULT now()
-    );
-  `);
-
-  console.log('✅ Schema enhancements completed');
-}
-
-async function createAccountingIndexes() {
-  console.log('🔍 Creating indexes for accounting performance...');
-
-  // Order history indexes
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_order_history_order_id ON order_history(order_id);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_order_history_client_id ON order_history(client_id);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_order_history_driver_id ON order_history(driver_id);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_order_history_action_type ON order_history(action_type);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_order_history_created_at ON order_history(created_at);');
-
-  // Accounting snapshots indexes
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_accounting_snapshots_entity ON accounting_snapshots(entity_type, entity_id);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_accounting_snapshots_type ON accounting_snapshots(snapshot_type);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_accounting_snapshots_created_at ON accounting_snapshots(created_at);');
-
-  // Third party orders indexes
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_third_party_orders_order_id ON third_party_orders(order_id);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_third_party_orders_name ON third_party_orders(third_party_name);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_third_party_orders_status ON third_party_orders(status);');
-
-  // Driver operations indexes
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_driver_operations_driver_id ON driver_operations(driver_id);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_driver_operations_order_id ON driver_operations(order_id);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_driver_operations_type ON driver_operations(operation_type);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_driver_operations_created_at ON driver_operations(created_at);');
-
-  // Client accounts indexes
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_client_accounts_client_id ON client_accounts(client_id);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_client_accounts_order_id ON client_accounts(order_id);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_client_accounts_type ON client_accounts(transaction_type);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_client_accounts_created_at ON client_accounts(created_at);');
-
-  // Enhanced transactions indexes
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_transactions_direction ON transactions(direction);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);');
-  await pool.query('CREATE INDEX IF NOT EXISTS idx_transactions_updated_at ON transactions(updated_at);');
-
-  console.log('✅ Accounting indexes created successfully');
-}
-
-async function createAccountingViews() {
-  console.log('📊 Creating accounting views for better performance...');
-
-  // Client account summary view
-  await pool.query(`
-    CREATE OR REPLACE VIEW client_account_summary AS
-    SELECT 
-      c.id as client_id,
-      c.business_name,
-      c.contact_person,
-      c.phone,
-      COUNT(DISTINCT o.id) as total_orders,
-      COALESCE(SUM(o.total_usd), 0) as total_revenue_usd,
-      COALESCE(SUM(o.total_lbp), 0) as total_revenue_lbp,
-      COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_usd ELSE 0 END), 0) as paid_amount_usd,
-      COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_lbp ELSE 0 END), 0) as paid_amount_lbp,
-      COALESCE(SUM(CASE WHEN o.payment_status = 'unpaid' THEN o.total_usd ELSE 0 END), 0) as pending_amount_usd,
-      COALESCE(SUM(CASE WHEN o.payment_status = 'unpaid' THEN o.total_lbp ELSE 0 END), 0) as pending_amount_lbp,
-      MAX(o.created_at) as last_order_date
-    FROM clients c
-    LEFT JOIN orders o ON c.id = o.customer_name::INTEGER OR c.business_name = o.customer_name
-    GROUP BY c.id, c.business_name, c.contact_person, c.phone;
-  `);
-
-  // Driver operations summary view
-  await pool.query(`
-    CREATE OR REPLACE VIEW driver_operations_summary AS
-    SELECT 
-      d.id as driver_id,
-      d.full_name,
-      d.phone,
-      COUNT(DISTINCT o.id) as total_deliveries,
-      COUNT(DISTINCT do.id) as total_operations,
-      COALESCE(SUM(o.driver_fee_usd), 0) as total_delivery_fees_usd,
-      COALESCE(SUM(o.driver_fee_lbp), 0) as total_delivery_fees_lbp,
-      COALESCE(SUM(do.amount_usd), 0) as total_operation_amount_usd,
-      COALESCE(SUM(do.amount_lbp), 0) as total_operation_amount_lbp,
-      COALESCE(SUM(CASE WHEN do.operation_type = 'fuel_expense' THEN do.amount_lbp ELSE 0 END), 0) as total_fuel_expenses_lbp,
-      MAX(o.created_at) as last_delivery_date
-    FROM drivers d
-    LEFT JOIN orders o ON d.id = o.driver_id
-    LEFT JOIN driver_operations do ON d.id = do.driver_id
-    GROUP BY d.id, d.full_name, d.phone;
-  `);
-
-  // Third party revenue summary view
-  await pool.query(`
-    CREATE OR REPLACE VIEW third_party_revenue_summary AS
-    SELECT 
-      tpo.third_party_name,
-      COUNT(DISTINCT tpo.order_id) as total_orders,
-      COALESCE(SUM(tpo.third_party_fee_usd), 0) as total_third_party_fees_usd,
-      COALESCE(SUM(tpo.third_party_fee_lbp), 0) as total_third_party_fees_lbp,
-      COALESCE(SUM(tpo.our_share_usd), 0) as total_our_share_usd,
-      COALESCE(SUM(tpo.our_share_lbp), 0) as total_our_share_lbp,
-      COALESCE(SUM(tpo.delivery_fee_usd), 0) as total_delivery_fees_usd,
-      COALESCE(SUM(tpo.delivery_fee_lbp), 0) as total_delivery_fees_lbp,
-      MAX(tpo.created_at) as last_order_date
-    FROM third_party_orders tpo
-    GROUP BY tpo.third_party_name;
-  `);
-
-  console.log('✅ Accounting views created successfully');
-}
-
-async function main() {
   try {
-    console.log('🚀 Starting accounting schema enhancement...');
-    console.log('📡 Connecting to:', DATABASE_URL.replace(/\/\/.*@/, '//***:***@'));
-    
-    // Test connection
-    await pool.query('SELECT 1 as test');
-    console.log('✅ Database connection successful');
+    // 1. Create clients table with proper structure
+    console.log('📋 Creating clients table...');
+    await run(`
+      CREATE TABLE IF NOT EXISTS clients (
+        id SERIAL PRIMARY KEY,
+        type TEXT NOT NULL CHECK (type IN ('BUSINESS', 'INDIVIDUAL')),
+        name TEXT NOT NULL,
+        business_name TEXT,
+        contact_phone TEXT,
+        contact_email TEXT,
+        address TEXT,
+        default_currency TEXT DEFAULT 'USD' CHECK (default_currency IN ('USD', 'LBP')),
+        account_balance_usd NUMERIC(12,2) DEFAULT 0,
+        account_balance_lbp BIGINT DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
 
-    // Enhance schema
-    await enhanceAccountingSchema();
-    
-    // Create indexes
+    // 2. Create customers table (receivers)
+    console.log('📋 Creating customers table...');
+    await run(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id SERIAL PRIMARY KEY,
+        client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        phone TEXT,
+        location TEXT,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+
+    // 3. Enhance orders table with accounting fields
+    console.log('📋 Enhancing orders table...');
+    await run(`
+      ALTER TABLE orders 
+      ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS exchange_rate NUMERIC(18,6) DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS price_usd NUMERIC(12,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS price_lbp BIGINT DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS total_order_value_usd NUMERIC(12,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS total_order_value_lbp BIGINT DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS date_delivered TIMESTAMPTZ
+    `);
+
+    // 4. Create third_parties table
+    console.log('📋 Creating third_parties table...');
+    await run(`
+      CREATE TABLE IF NOT EXISTS third_parties (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        phone TEXT,
+        contact_email TEXT,
+        account_balance_usd NUMERIC(12,2) DEFAULT 0,
+        account_balance_lbp BIGINT DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+
+    // 5. Enhance drivers table with account balances
+    console.log('📋 Enhancing drivers table...');
+    await run(`
+      ALTER TABLE drivers 
+      ADD COLUMN IF NOT EXISTS account_balance_usd NUMERIC(12,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS account_balance_lbp BIGINT DEFAULT 0
+    `);
+
+    // 6. Create payments table
+    console.log('📋 Creating payments table...');
+    await run(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+        account_type TEXT NOT NULL CHECK (account_type IN ('client', 'driver', 'third_party', 'cashbox')),
+        account_id INTEGER NOT NULL,
+        amount_usd NUMERIC(12,2) DEFAULT 0,
+        amount_lbp BIGINT DEFAULT 0,
+        method TEXT NOT NULL CHECK (method IN ('cash', 'card', 'online', 'bank_transfer')),
+        date TIMESTAMPTZ DEFAULT now(),
+        note TEXT,
+        reconciled BOOLEAN DEFAULT false,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+
+    // 7. Create cashbox_entries table
+    console.log('📋 Creating cashbox_entries table...');
+    await run(`
+      CREATE TABLE IF NOT EXISTS cashbox_entries (
+        id SERIAL PRIMARY KEY,
+        cashbox_id INTEGER NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('debit', 'credit')),
+        amount_usd NUMERIC(12,2) DEFAULT 0,
+        amount_lbp BIGINT DEFAULT 0,
+        reference_id INTEGER,
+        reference_table TEXT,
+        note TEXT,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        date TIMESTAMPTZ DEFAULT now(),
+        created_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+
+    // 8. Create driver_advances table
+    console.log('📋 Creating driver_advances table...');
+    await run(`
+      CREATE TABLE IF NOT EXISTS driver_advances (
+        id SERIAL PRIMARY KEY,
+        driver_id INTEGER REFERENCES drivers(id) ON DELETE CASCADE,
+        order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+        amount_usd NUMERIC(12,2) DEFAULT 0,
+        amount_lbp BIGINT DEFAULT 0,
+        status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'cleared')),
+        created_at TIMESTAMPTZ DEFAULT now(),
+        cleared_at TIMESTAMPTZ
+      )
+    `);
+
+    // 9. Create account_adjustments table
+    console.log('📋 Creating account_adjustments table...');
+    await run(`
+      CREATE TABLE IF NOT EXISTS account_adjustments (
+        id SERIAL PRIMARY KEY,
+        account_type TEXT NOT NULL CHECK (account_type IN ('client', 'driver', 'third_party')),
+        account_id INTEGER NOT NULL,
+        amount_usd NUMERIC(12,2) DEFAULT 0,
+        amount_lbp BIGINT DEFAULT 0,
+        reason TEXT NOT NULL,
+        date TIMESTAMPTZ DEFAULT now(),
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+
+    // 10. Create exchange_rates table
+    console.log('📋 Creating exchange_rates table...');
+    await run(`
+      CREATE TABLE IF NOT EXISTS exchange_rates (
+        id SERIAL PRIMARY KEY,
+        date DATE NOT NULL,
+        usd_to_lbp_rate NUMERIC(18,6) NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(date)
+      )
+    `);
+
+    // 11. Create audit_log table for tracking changes
+    console.log('📋 Creating audit_log table...');
+    await run(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id SERIAL PRIMARY KEY,
+        table_name TEXT NOT NULL,
+        record_id INTEGER NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
+        old_values JSONB,
+        new_values JSONB,
+        changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        changed_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+
+    // 12. Create indexes for performance
     await createAccountingIndexes();
-    
-    // Create views
-    await createAccountingViews();
-    
-    console.log('🎉 Accounting schema enhancement completed successfully!');
-    console.log('📊 Database is ready for comprehensive accounting operations');
-    
+
+    console.log('✅ Accounting schema enhancement completed successfully!');
+    return true;
+
   } catch (error) {
-    console.error('❌ Schema enhancement failed:', error);
-    process.exit(1);
-  } finally {
-    await pool.end();
-    console.log('✅ Database connection closed');
+    console.error('❌ Error enhancing accounting schema:', error);
+    throw error;
   }
 }
 
-// Run the enhancement
-main();
+async function createAccountingIndexes() {
+  console.log('📊 Creating accounting indexes...');
+  
+  const indexes = [
+    'CREATE INDEX IF NOT EXISTS idx_orders_client_id ON orders(client_id)',
+    'CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id)',
+    'CREATE INDEX IF NOT EXISTS idx_orders_date_created ON orders(date_created)',
+    'CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON orders(payment_status)',
+    'CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)',
+    'CREATE INDEX IF NOT EXISTS idx_payments_account_type_id ON payments(account_type, account_id)',
+    'CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(date)',
+    'CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id)',
+    'CREATE INDEX IF NOT EXISTS idx_cashbox_entries_date ON cashbox_entries(date)',
+    'CREATE INDEX IF NOT EXISTS idx_driver_advances_driver_id ON driver_advances(driver_id)',
+    'CREATE INDEX IF NOT EXISTS idx_driver_advances_status ON driver_advances(status)',
+    'CREATE INDEX IF NOT EXISTS idx_exchange_rates_date ON exchange_rates(date)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_log_table_record ON audit_log(table_name, record_id)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_log_changed_at ON audit_log(changed_at)'
+  ];
+
+  for (const indexSql of indexes) {
+    try {
+      await run(indexSql);
+    } catch (error) {
+      console.warn(`⚠️  Index creation warning: ${error.message}`);
+    }
+  }
+}
+
+// Function to calculate order totals
+async function calculateOrderTotals(orderId) {
+  try {
+    const order = await query('SELECT * FROM orders WHERE id = ?', [orderId]);
+    if (!order.length) return null;
+
+    const o = order[0];
+    const totalUsd = Number(o.price_usd || 0) + Number(o.delivery_fee_usd || 0) + Number(o.third_party_fee_usd || 0);
+    const totalLbp = Number(o.price_lbp || 0) + Number(o.delivery_fee_lbp || 0) + Number(o.third_party_fee_lbp || 0);
+
+    await run(`
+      UPDATE orders 
+      SET total_order_value_usd = ?, total_order_value_lbp = ?
+      WHERE id = ?
+    `, [totalUsd, totalLbp, orderId]);
+
+    return { totalUsd, totalLbp };
+  } catch (error) {
+    console.error('Error calculating order totals:', error);
+    throw error;
+  }
+}
+
+// Function to handle order status change to delivered
+async function handleOrderDelivered(orderId) {
+  try {
+    const order = await query('SELECT * FROM orders WHERE id = ?', [orderId]);
+    if (!order.length) return;
+
+    const o = order[0];
+    
+    // Update driver balance if in-house delivery
+    if (o.deliver_method === 'in_house' && o.driver_id && o.driver_fee_usd > 0) {
+      await run(`
+        UPDATE drivers 
+        SET account_balance_usd = account_balance_usd + ?, 
+            account_balance_lbp = account_balance_lbp + ?
+        WHERE id = ?
+      `, [o.driver_fee_usd, o.driver_fee_lbp, o.driver_id]);
+    }
+
+    // Update third party balance if third party delivery
+    if (o.deliver_method === 'third_party' && o.third_party_fee_usd > 0) {
+      // Find or create third party
+      let thirdParty = await query('SELECT id FROM third_parties WHERE name = ?', [o.third_party_name]);
+      if (!thirdParty.length) {
+        const result = await run(`
+          INSERT INTO third_parties (name) VALUES (?)
+        `, [o.third_party_name]);
+        thirdParty = [{ id: result.id }];
+      }
+
+      await run(`
+        UPDATE third_parties 
+        SET account_balance_usd = account_balance_usd + ?, 
+            account_balance_lbp = account_balance_lbp + ?
+        WHERE id = ?
+      `, [o.third_party_fee_usd, o.third_party_fee_lbp, thirdParty[0].id]);
+    }
+
+    // Update order delivered date
+    await run(`
+      UPDATE orders 
+      SET date_delivered = now()
+      WHERE id = ?
+    `, [orderId]);
+
+    console.log(`✅ Order ${orderId} marked as delivered and balances updated`);
+  } catch (error) {
+    console.error('Error handling order delivered:', error);
+    throw error;
+  }
+}
+
+// Function to record payment
+async function recordPayment(paymentData) {
+  try {
+    const {
+      orderId,
+      accountType,
+      accountId,
+      amountUsd,
+      amountLbp,
+      method,
+      note,
+      createdBy
+    } = paymentData;
+
+    // Insert payment record
+    const result = await run(`
+      INSERT INTO payments (order_id, account_type, account_id, amount_usd, amount_lbp, method, note, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [orderId, accountType, accountId, amountUsd, amountLbp, method, note, createdBy]);
+
+    // Update account balance
+    if (accountType === 'client') {
+      await run(`
+        UPDATE clients 
+        SET account_balance_usd = account_balance_usd - ?, 
+            account_balance_lbp = account_balance_lbp - ?
+        WHERE id = ?
+      `, [amountUsd, amountLbp, accountId]);
+    } else if (accountType === 'driver') {
+      await run(`
+        UPDATE drivers 
+        SET account_balance_usd = account_balance_usd - ?, 
+            account_balance_lbp = account_balance_lbp - ?
+        WHERE id = ?
+      `, [amountUsd, amountLbp, accountId]);
+    } else if (accountType === 'third_party') {
+      await run(`
+        UPDATE third_parties 
+        SET account_balance_usd = account_balance_usd - ?, 
+            account_balance_lbp = account_balance_lbp - ?
+        WHERE id = ?
+      `, [amountUsd, amountLbp, accountId]);
+    }
+
+    // Update cashbox if cash payment
+    if (method === 'cash') {
+      await run(`
+        INSERT INTO cashbox_entries (cashbox_id, type, amount_usd, amount_lbp, reference_id, reference_table, note, created_by)
+        VALUES (1, 'credit', ?, ?, ?, 'payments', ?, ?)
+      `, [amountUsd, amountLbp, result.id, note, createdBy]);
+    }
+
+    console.log(`✅ Payment recorded: ${result.id}`);
+    return result;
+  } catch (error) {
+    console.error('Error recording payment:', error);
+    throw error;
+  }
+}
+
+module.exports = {
+  enhanceAccountingSchema,
+  createAccountingIndexes,
+  calculateOrderTotals,
+  handleOrderDelivered,
+  recordPayment
+};
+
+// Run if called directly
+if (require.main === module) {
+  enhanceAccountingSchema()
+    .then(() => {
+      console.log('✅ Accounting schema enhancement completed');
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('❌ Accounting schema enhancement failed:', error);
+      process.exit(1);
+    });
+}

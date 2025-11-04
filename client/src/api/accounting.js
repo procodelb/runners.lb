@@ -1,101 +1,163 @@
 import api from './index';
 
-export async function fetchEntities(params = {}) {
-  const { data } = await api.get('/accounting/entities', { params });
-  return data;
-}
-
-export async function fetchEntityOrders(type, id, params = {}) {
-  const { data } = await api.get(`/accounting/${type}/${id}/orders`, { params });
-  return data;
-}
-
-export async function cashoutOrder(orderId, mode) {
-  const { data } = await api.post('/accounting/cashout', { orderId, mode });
-  return data;
-}
-
-export const accountingApi = {
-  // Get all transactions
-  getTransactions: async (params = {}) => {
-    const response = await api.get('/accounting/transactions', { params });
+const accountingAPI = {
+  // Get accounting overview data
+  getOverview: async (params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== '') {
+        queryParams.append(key, params[key]);
+      }
+    });
+    
+    const response = await api.get(`/accounting/overview?${queryParams}`);
     return response.data;
   },
 
-  // Get transaction by ID
-  getTransaction: async (id) => {
-    const response = await api.get(`/accounting/transactions/${id}`);
+  // Get clients accounting data
+  getClients: async (params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== '') {
+        queryParams.append(key, params[key]);
+      }
+    });
+    
+    const response = await api.get(`/accounting/clients?${queryParams}`);
     return response.data;
   },
 
-  // Create transaction
-  createTransaction: async (transactionData) => {
-    const response = await api.post('/accounting/transactions', transactionData);
+  // Get drivers accounting data
+  getDrivers: async (params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== '') {
+        queryParams.append(key, params[key]);
+      }
+    });
+    
+    const response = await api.get(`/accounting/drivers?${queryParams}`);
     return response.data;
   },
 
-  // Update transaction
-  updateTransaction: async (id, transactionData) => {
-    const response = await api.put(`/accounting/transactions/${id}`, transactionData);
+  // Get third-party accounting data
+  getThirdParty: async (params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== '') {
+        queryParams.append(key, params[key]);
+      }
+    });
+    
+    const response = await api.get(`/accounting/thirdparty?${queryParams}`);
     return response.data;
   },
 
-  // Delete transaction
-  deleteTransaction: async (id) => {
-    const response = await api.delete(`/accounting/transactions/${id}`);
+  // Record payment
+  recordPayment: async (paymentData) => {
+    const response = await api.post('/accounting/payments', paymentData);
     return response.data;
   },
 
-  // Get financial reports
-  getReports: async (params = {}) => {
-    const response = await api.get('/accounting/reports', { params });
+  // Update order status
+  updateOrderStatus: async (orderId, status) => {
+    const response = await api.put(`/accounting/orders/${orderId}/status`, { status });
+    return response.data;
+  },
+
+  // Get exchange rates
+  getExchangeRates: async () => {
+    const response = await api.get('/accounting/exchange-rates');
+    return response.data;
+  },
+
+  // Update exchange rate
+  updateExchangeRate: async (date, rate) => {
+    const response = await api.post('/accounting/exchange-rates', { date, usd_to_lbp_rate: rate });
+    return response.data;
+  },
+
+  // Export client statement
+  exportClientStatement: async (clientId, params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== '') {
+        queryParams.append(key, params[key]);
+      }
+    });
+    
+    const response = await api.get(`/accounting/export/client-statement/${clientId}?${queryParams}`, {
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  // Bulk operations
+  bulkMarkPaid: async (orderIds) => {
+    const response = await api.post('/accounting/bulk/mark-paid', { orderIds });
+    return response.data;
+  },
+
+  bulkExport: async (orderIds, format = 'csv') => {
+    const response = await api.post('/accounting/bulk/export', { orderIds, format });
     return response.data;
   },
 
   // Get account balances
-  getBalances: async () => {
-    const response = await api.get('/accounting/balances');
+  getAccountBalances: async (accountType, accountId) => {
+    const response = await api.get(`/accounting/balances/${accountType}/${accountId}`);
     return response.data;
   },
 
-  // Export accounting data
-  exportData: async (params = {}) => {
-    const response = await api.get('/accounting/export', { 
-      params,
-      responseType: 'blob'
+  // Create account adjustment
+  createAccountAdjustment: async (adjustmentData) => {
+    const response = await api.post('/accounting/adjustments', adjustmentData);
+    return response.data;
+  },
+
+  // Get driver advances
+  getDriverAdvances: async (driverId) => {
+    const response = await api.get(`/accounting/driver-advances/${driverId}`);
+    return response.data;
+  },
+
+  // Clear driver advance
+  clearDriverAdvance: async (advanceId) => {
+    const response = await api.put(`/accounting/driver-advances/${advanceId}/clear`);
+    return response.data;
+  },
+
+  // Get cashbox entries
+  getCashboxEntries: async (params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== '') {
+        queryParams.append(key, params[key]);
+      }
     });
+    
+    const response = await api.get(`/accounting/cashbox-entries?${queryParams}`);
     return response.data;
   },
 
-  // Get client ledger
-  getClientLedger: async (clientId, params = {}) => {
-    const response = await api.get(`/accounting/clients/${clientId}/ledger`, { params });
+  // Create cashbox entry
+  createCashboxEntry: async (entryData) => {
+    const response = await api.post('/accounting/cashbox-entries', entryData);
     return response.data;
   },
 
-  // Get driver ledger
-  getDriverLedger: async (driverId, params = {}) => {
-    const response = await api.get(`/accounting/drivers/${driverId}/ledger`, { params });
-    return response.data;
-  },
-
-  // Get third party ledger
-  getThirdPartyLedger: async (thirdPartyId, params = {}) => {
-    const response = await api.get(`/accounting/third-parties/${thirdPartyId}/ledger`, { params });
-    return response.data;
-  },
-
-  // Print receipt
-  printReceipt: async (transactionId) => {
-    const response = await api.get(`/accounting/transactions/${transactionId}/print`, {
-      responseType: 'blob'
+  // Get audit log
+  getAuditLog: async (params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== '') {
+        queryParams.append(key, params[key]);
+      }
     });
+    
+    const response = await api.get(`/accounting/audit-log?${queryParams}`);
     return response.data;
   }
 };
 
-// Helper for price-list search used by Add Order flows when needed in accounting context
-export async function fetchPriceListSearch(q) {
-  const { data } = await api.get('/price-list/search', { params: { q } });
-  return data;
-}
+export default accountingAPI;

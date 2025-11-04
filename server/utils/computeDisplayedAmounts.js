@@ -6,11 +6,11 @@ function toNumber(value, precision) {
 }
 
 // Canonical compute logic. Keep in sync with client src/utils/accountingUtils.js
-function computeDisplayedAmounts(orderRow) {
+function computeDisplayedAmounts(orderRow, context = 'client') {
   const totalUSD = toNumber(orderRow.total_usd, 2);
   const totalLBP = toNumber(orderRow.total_lbp, 0);
-  const deliveryFeesUSD = toNumber(orderRow.delivery_fee_usd || orderRow.delivery_fees_usd, 2);
-  const deliveryFeesLBP = toNumber(orderRow.delivery_fee_lbp || orderRow.delivery_fees_lbp, 0);
+  const deliveryFeesUSD = toNumber(orderRow.delivery_fee_usd, 2);
+  const deliveryFeesLBP = toNumber(orderRow.delivery_fee_lbp, 0);
   const thirdPartyFeesUSD = toNumber(orderRow.third_party_fee_usd, 2);
   const thirdPartyFeesLBP = toNumber(orderRow.third_party_fee_lbp, 0);
   const driverFeeUSD = toNumber(orderRow.driver_fee_usd, 2);
@@ -25,7 +25,7 @@ function computeDisplayedAmounts(orderRow) {
   let showDeliveryFees = true;
 
   const isInHouse = deliveryMethod === 'in_house' || deliveryMethod === 'inhouse' || deliveryMethod === 'in house';
-  const isThirdParty = deliveryMethod === 'third_party' || deliveryMethod === 'third party';
+  const isThirdParty = deliveryMethod === 'third_party' || deliveryMethod === 'third party' || deliveryMethod === 'thirdparty';
   const isInstant = orderType === 'instant';
 
   if (isInHouse) {
@@ -45,8 +45,16 @@ function computeDisplayedAmounts(orderRow) {
     if (!isInstant) {
       displayedTotalUSD = totalUSD + deliveryFeesUSD + thirdPartyFeesUSD;
       displayedTotalLBP = totalLBP + deliveryFeesLBP + thirdPartyFeesLBP;
-      deliveryFeesShownUSD = deliveryFeesUSD + thirdPartyFeesUSD;
-      deliveryFeesShownLBP = deliveryFeesLBP + thirdPartyFeesLBP;
+      
+      // For client context: show only own delivery fees
+      // For accounting context: show both own and third party fees
+      if (context === 'client') {
+        deliveryFeesShownUSD = deliveryFeesUSD;
+        deliveryFeesShownLBP = deliveryFeesLBP;
+      } else {
+        deliveryFeesShownUSD = deliveryFeesUSD + thirdPartyFeesUSD;
+        deliveryFeesShownLBP = deliveryFeesLBP + thirdPartyFeesLBP;
+      }
     } else {
       displayedTotalUSD = totalUSD + driverFeeUSD + thirdPartyFeesUSD;
       displayedTotalLBP = totalLBP + driverFeeLBP + thirdPartyFeesLBP;

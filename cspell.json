@@ -1,0 +1,60 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "dictionaries": ["typescript", "node", "html", "css", "bash"],
+  "dictionaryDefinitions": [],
+  "ignorePaths": [
+    "node_modules/**",
+    "**/*.lock",
+    "**/*.log",
+    "build/**",
+    "dist/**",
+    ".git/**"
+  ],
+  "words": [
+    "ecommerce",
+    "cashout",
+    "cashin",
+    "cashbox",
+    "prepaid",
+    "soufiam",
+    "soufian",
+    "lbp",
+    "usd",
+    "payable",
+    "debit",
+    "credit",
+    "subcategory",
+    "tx",
+    "idempotency",
+    "render",
+    "vercel",
+    "neon",
+    "knex",
+    "idempotent",
+    "mqtt",
+    "websocket",
+    "socketio"
+  ],
+  "flagWords": [],
+  "ignoreWords": [],
+  "overrides": [
+    {
+      "filename": "**/*.js",
+      "language": "en"
+    },
+    {
+      "filename": "**/*.jsx",
+      "language": "en"
+    },
+    {
+      "filename": "**/*.ts",
+      "language": "en"
+    },
+    {
+      "filename": "**/*.tsx",
+      "language": "en"
+    }
+  ]
+}
+

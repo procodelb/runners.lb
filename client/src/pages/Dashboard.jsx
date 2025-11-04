@@ -37,6 +37,7 @@ const Dashboard = () => {
     cashboxBalance: { usd: 0, lbp: 0 }
   });
 
+
   // Safety function to ensure stats object is always valid
   const getSafeStats = () => {
     return {
@@ -79,8 +80,8 @@ const Dashboard = () => {
     () => api.get('/dashboard/stats'),
     {
       enabled: isAuthenticated && !!user, // Only run query when authenticated
-      refetchInterval: 30000, // Refresh every 30 seconds
-      staleTime: 10000,
+      refetchInterval: 10000, // Refresh every 10 seconds for more real-time updates
+      staleTime: 5000, // Consider data stale after 5 seconds
       retry: 3,
       retryDelay: 1000,
       onError: (error) => {
@@ -94,7 +95,8 @@ const Dashboard = () => {
     () => api.get('/orders?limit=5'),
     {
       enabled: isAuthenticated && !!user, // Only run query when authenticated
-      refetchInterval: 15000,
+      refetchInterval: 8000, // Refresh every 8 seconds
+      staleTime: 4000,
       retry: 2,
       select: (response) => response.data?.data || [],
       onError: (error) => {
@@ -108,7 +110,8 @@ const Dashboard = () => {
     () => api.get('/transactions?limit=5'),
     {
       enabled: isAuthenticated && !!user, // Only run query when authenticated
-      refetchInterval: 20000,
+      refetchInterval: 12000, // Refresh every 12 seconds
+      staleTime: 6000,
       retry: 2,
       select: (response) => response.data?.data || [],
       onError: (error) => {
@@ -133,82 +136,64 @@ const Dashboard = () => {
 
   useEffect(() => {
     console.log('📊 Dashboard: dashboardData received:', dashboardData);
-    if (dashboardData?.data) {
-      console.log('📊 Dashboard: Setting stats with data:', dashboardData.data);
-      // Ensure all required properties exist with default values
-      const safeData = {
-        totalOrders: dashboardData.data.totalOrders || 0,
-        pendingOrders: dashboardData.data.pendingOrders || 0,
-        completedOrders: dashboardData.data.completedOrders || 0,
-        totalClients: dashboardData.data.totalClients || 0,
-        activeDrivers: dashboardData.data.activeDrivers || 0,
-        totalRevenue: {
-          usd: dashboardData.data.totalRevenue?.usd || 0,
-          lbp: dashboardData.data.totalRevenue?.lbp || 0
-        },
-        pendingPayments: {
-          usd: dashboardData.data.pendingPayments?.usd || 0,
-          lbp: dashboardData.data.pendingPayments?.lbp || 0
-        },
-        totalIncomes: {
-          usd: dashboardData.data.totalIncomes?.usd || 0,
-          lbp: dashboardData.data.totalIncomes?.lbp || 0
-        },
-        totalExpenses: {
-          usd: dashboardData.data.totalExpenses?.usd || 0,
-          lbp: dashboardData.data.totalExpenses?.lbp || 0
-        },
-        netProfit: {
-          usd: dashboardData.data.netProfit?.usd || 0,
-          lbp: dashboardData.data.netProfit?.lbp || 0
-        },
-        ordersCompletedToday: dashboardData.data.ordersCompletedToday || 0,
-        ordersCompletedThisMonth: dashboardData.data.ordersCompletedThisMonth || 0,
-        cashboxBalance: {
-          usd: dashboardData.data.cashboxBalance?.usd || 0,
-          lbp: dashboardData.data.cashboxBalance?.lbp || 0
-        }
-      };
-      setStats(safeData);
+    
+    // Extract data from axios response structure
+    // axios response: { status, data: { success: true, data: {...} }, headers, ... }
+    // react-query's data is the axios response, so we need response.data.data
+    let statsData = null;
+    
+    if (dashboardData?.data?.success && dashboardData?.data?.data) {
+      // Server response structure: { success: true, data: {...} }
+      statsData = dashboardData.data.data;
+      console.log('📊 Dashboard: Setting stats with server data:', statsData);
     } else if (dashboardData?.data?.data) {
-      // Handle nested data structure from virtual responses
-      console.log('📊 Dashboard: Setting stats with nested data:', dashboardData.data.data);
+      // Alternative nested structure
+      statsData = dashboardData.data.data;
+      console.log('📊 Dashboard: Setting stats with nested data:', statsData);
+    } else if (dashboardData?.data) {
+      // Direct data structure
+      statsData = dashboardData.data;
+      console.log('📊 Dashboard: Setting stats with direct data:', statsData);
+    }
+    
+    if (statsData) {
+      // Ensure all required properties exist with default values and proper number conversion
       const safeData = {
-        totalOrders: dashboardData.data.data.totalOrders || 0,
-        pendingOrders: dashboardData.data.data.pendingOrders || 0,
-        completedOrders: dashboardData.data.data.completedOrders || 0,
-        totalClients: dashboardData.data.data.totalClients || 0,
-        activeDrivers: dashboardData.data.data.activeDrivers || 0,
+        totalOrders: parseInt(statsData.totalOrders) || 0,
+        pendingOrders: parseInt(statsData.pendingOrders) || 0,
+        completedOrders: parseInt(statsData.completedOrders) || 0,
+        totalClients: parseInt(statsData.totalClients) || 0,
+        activeDrivers: parseInt(statsData.activeDrivers) || 0,
         totalRevenue: {
-          usd: dashboardData.data.data.totalRevenue?.usd || 0,
-          lbp: dashboardData.data.data.totalRevenue?.lbp || 0
+          usd: parseFloat(statsData.totalRevenue?.usd) || 0,
+          lbp: parseInt(statsData.totalRevenue?.lbp) || 0
         },
         pendingPayments: {
-          usd: dashboardData.data.data.pendingPayments?.usd || 0,
-          lbp: dashboardData.data.data.pendingPayments?.lbp || 0
+          usd: parseFloat(statsData.pendingPayments?.usd) || 0,
+          lbp: parseInt(statsData.pendingPayments?.lbp) || 0
         },
         totalIncomes: {
-          usd: dashboardData.data.data.totalIncomes?.usd || 0,
-          lbp: dashboardData.data.data.totalIncomes?.lbp || 0
+          usd: parseFloat(statsData.totalIncomes?.usd) || 0,
+          lbp: parseInt(statsData.totalIncomes?.lbp) || 0
         },
         totalExpenses: {
-          usd: dashboardData.data.data.totalExpenses?.usd || 0,
-          lbp: dashboardData.data.data.totalExpenses?.lbp || 0
+          usd: parseFloat(statsData.totalExpenses?.usd) || 0,
+          lbp: parseInt(statsData.totalExpenses?.lbp) || 0
         },
         netProfit: {
-          usd: dashboardData.data.data.netProfit?.usd || 0,
-          lbp: dashboardData.data.data.netProfit?.lbp || 0
+          usd: parseFloat(statsData.netProfit?.usd) || 0,
+          lbp: parseInt(statsData.netProfit?.lbp) || 0
         },
-        ordersCompletedToday: dashboardData.data.data.ordersCompletedToday || 0,
-        ordersCompletedThisMonth: dashboardData.data.data.ordersCompletedThisMonth || 0,
+        ordersCompletedToday: parseInt(statsData.ordersCompletedToday) || 0,
+        ordersCompletedThisMonth: parseInt(statsData.ordersCompletedThisMonth) || 0,
         cashboxBalance: {
-          usd: dashboardData.data.data.cashboxBalance?.usd || 0,
-          lbp: dashboardData.data.data.cashboxBalance?.lbp || 0
+          usd: parseFloat(statsData.cashboxBalance?.usd) || 0,
+          lbp: parseInt(statsData.cashboxBalance?.lbp) || 0
         }
       };
       setStats(safeData);
     }
-  }, [dashboardData]);
+  }, [dashboardData, isLoading]);
 
   // Show loading if not authenticated yet
   if (!isAuthenticated || !user) {

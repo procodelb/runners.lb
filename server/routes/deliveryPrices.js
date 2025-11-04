@@ -93,6 +93,14 @@ router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Validate that id is a number to prevent search parameter confusion
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid delivery price ID. ID must be a number.' 
+      });
+    }
+    
     const priceQuery = `
       SELECT 
         dp.*,
@@ -188,6 +196,15 @@ router.post('/', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate that id is a number
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid delivery price ID. ID must be a number.' 
+      });
+    }
+    
     const updateData = { ...req.body };
 
     // Remove fields that shouldn't be updated
@@ -249,6 +266,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate that id is a number
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid delivery price ID. ID must be a number.' 
+      });
+    }
     
     // Check if price is being used in orders
     const usageQuery = 'SELECT COUNT(*) as count FROM orders WHERE delivery_price_id = ?';

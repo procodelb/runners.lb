@@ -77,6 +77,14 @@ router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Validate that id is a number to prevent search parameter confusion
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid driver ID. ID must be a number.' 
+      });
+    }
+    
     const driverQuery = 'SELECT * FROM drivers WHERE id = ?';
     const result = await query(driverQuery, [id]);
     
@@ -160,6 +168,15 @@ router.post('/', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate that id is a number
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid driver ID. ID must be a number.' 
+      });
+    }
+    
     const updateData = req.body;
 
     // Remove fields that shouldn't be updated
@@ -212,6 +229,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate that id is a number
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid driver ID. ID must be a number.' 
+      });
+    }
     
     const deleteQuery = 'DELETE FROM drivers WHERE id = ?';
     const result = await run(deleteQuery, [id]);

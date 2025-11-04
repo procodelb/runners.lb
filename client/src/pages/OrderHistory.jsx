@@ -565,19 +565,19 @@ const OrdersTable = ({ orders, drivers, onViewOrder, onExportPDF }) => {
               
               <td className="px-4 py-3">
                 <div className="space-y-1">
-                  {order.total_usd > 0 && (
+                  {(order.computed_total_usd || order.total_usd) > 0 && (
                     <div className="text-sm font-medium text-gray-900">
-                      ${order.total_usd.toFixed(2)}
+                      ${Number(order.computed_total_usd || order.total_usd || 0).toFixed(2)}
                     </div>
                   )}
-                  {order.total_lbp > 0 && (
+                  {(order.computed_total_lbp || order.total_lbp) > 0 && (
                     <div className="text-sm text-gray-600">
-                      {order.total_lbp.toLocaleString()} LBP
+                      {Number(order.computed_total_lbp || order.total_lbp || 0).toLocaleString()} LBP
                     </div>
                   )}
                   {order.driver_fee_lbp > 0 && (
                     <div className="text-xs text-gray-500">
-                      Driver Fee: {order.driver_fee_lbp.toLocaleString()} LBP
+                      Driver Fee: {Number(order.driver_fee_lbp || 0).toLocaleString()} LBP
                     </div>
                   )}
                 </div>
@@ -719,10 +719,10 @@ const ClientsHistoryTable = ({ clients, transactions, onViewClient }) => {
                       {client.total_orders || 0} orders
                     </div>
                     <div className="text-sm text-gray-600">
-                      ${(client.total_usd || 0).toFixed(2)}
+                      ${Number(client.total_usd || 0).toFixed(2)}
                     </div>
                     <div className="text-xs text-gray-500">
-                      {(client.total_lbp || 0).toLocaleString()} LBP
+                      {Number(client.total_lbp || 0).toLocaleString()} LBP
                     </div>
                   </div>
                 </td>
@@ -733,10 +733,10 @@ const ClientsHistoryTable = ({ clients, transactions, onViewClient }) => {
                       {getCashOutTransactions(client.id).length} cashouts
                     </div>
                     <div className="text-sm text-gray-600">
-                      ${cashOutTotal.usd.toFixed(2)}
+                      ${Number(cashOutTotal.usd || 0).toFixed(2)}
                     </div>
                     <div className="text-xs text-gray-500">
-                      {cashOutTotal.lbp.toLocaleString()} LBP
+                      {Number(cashOutTotal.lbp || 0).toLocaleString()} LBP
                     </div>
                   </div>
                 </td>
@@ -744,14 +744,14 @@ const ClientsHistoryTable = ({ clients, transactions, onViewClient }) => {
                 <td className="px-4 py-3">
                   <div className="space-y-1">
                     <div className={`text-sm font-medium ${
-                      (client.balance_usd || 0) > 0 ? 'text-green-600' : 'text-red-600'
+                      Number(client.balance_usd || 0) > 0 ? 'text-green-600' : 'text-red-600'
                     }`}>
-                      ${(client.balance_usd || 0).toFixed(2)}
+                      ${Number(client.balance_usd || 0).toFixed(2)}
                     </div>
                     <div className={`text-xs ${
-                      (client.balance_lbp || 0) > 0 ? 'text-green-600' : 'text-red-600'
+                      Number(client.balance_lbp || 0) > 0 ? 'text-green-600' : 'text-red-600'
                     }`}>
-                      {(client.balance_lbp || 0).toLocaleString()} LBP
+                      {Number(client.balance_lbp || 0).toLocaleString()} LBP
                     </div>
                   </div>
                 </td>

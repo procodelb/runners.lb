@@ -25,20 +25,12 @@ export function AuthProvider({ children }) {
         headers.Authorization = `Bearer ${tkn}`;
       }
       
-      // Auto-detect API base URL based on environment
-      let apiBase;
-      if (typeof window !== 'undefined') {
-        const hostname = window.location.hostname;
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
-          apiBase = 'http://localhost:5000';
-        } else if (hostname.includes('vercel.app')) {
-          apiBase = 'https://soufiam-erp-backend.onrender.com';
-        } else {
-          apiBase = 'https://soufiam-erp-backend.onrender.com';
-        }
-      } else {
-        apiBase = 'https://soufiam-erp-backend.onrender.com';
-      }
+      // Resolve API base
+      let apiBase = (import.meta?.env?.VITE_API_BASE_URL)
+        ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
+        : '';
+      if (!apiBase) apiBase = '';
+      console.log('🔍 AuthContext using API base:', apiBase);
       
       console.log('🌐 fetchMe: Using API base:', apiBase);
       
@@ -125,6 +117,20 @@ export function AuthProvider({ children }) {
     return () => { mounted = false; };
   }, []); // Remove token dependency to avoid infinite loop
 
+  // Listen for unauthorized events from API client
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      console.log('🔒 AuthContext: Received unauthorized event, clearing auth state');
+      setUser(null);
+      setToken(null);
+      setIsAuthenticated(false);
+      safeLocalRemove("token");
+    };
+
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+  }, []);
+
   // Update isAuthenticated whenever user or token changes
   useEffect(() => {
     const authenticated = !!(user && (token || true)); // Allow cookie-based auth
@@ -137,20 +143,12 @@ export function AuthProvider({ children }) {
     console.log('🔐 AuthContext: Starting login process...');
     setLoading(true);
     try {
-      // Auto-detect API base URL based on environment
-      let apiBase;
-      if (typeof window !== 'undefined') {
-        const hostname = window.location.hostname;
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
-          apiBase = 'http://localhost:5000';
-        } else if (hostname.includes('vercel.app')) {
-          apiBase = 'https://soufiam-erp-backend.onrender.com';
-        } else {
-          apiBase = 'https://soufiam-erp-backend.onrender.com';
-        }
-      } else {
-        apiBase = 'https://soufiam-erp-backend.onrender.com';
-      }
+      // Resolve API base
+      let apiBase = (import.meta?.env?.VITE_API_BASE_URL)
+        ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
+        : '';
+      if (!apiBase) apiBase = '';
+      console.log('🔍 AuthContext using API base:', apiBase);
       
       console.log('🌐 AuthContext: Using API base:', apiBase);
       
@@ -241,20 +239,12 @@ export function AuthProvider({ children }) {
   const signup = async (payload) => {
     setLoading(true);
     try {
-      // Auto-detect API base URL based on environment
-      let apiBase;
-      if (typeof window !== 'undefined') {
-        const hostname = window.location.hostname;
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
-          apiBase = 'http://localhost:5000';
-        } else if (hostname.includes('vercel.app')) {
-          apiBase = 'https://soufiam-erp-backend.onrender.com';
-        } else {
-          apiBase = 'https://soufiam-erp-backend.onrender.com';
-        }
-      } else {
-        apiBase = 'https://soufiam-erp-backend.onrender.com';
-      }
+      // Resolve API base
+      let apiBase = (import.meta?.env?.VITE_API_BASE_URL)
+        ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
+        : '';
+      if (!apiBase) apiBase = '';
+      console.log('🔍 AuthContext using API base:', apiBase);
       
       const res = await fetch(`${apiBase}/api/auth/signup`, {
         method: "POST",
@@ -301,20 +291,9 @@ export function AuthProvider({ children }) {
     console.log('🚪 AuthContext: Logging out...');
     
     try {
-      // Auto-detect API base URL based on environment
-      let apiBase;
-      if (typeof window !== 'undefined') {
-        const hostname = window.location.hostname;
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
-          apiBase = 'http://localhost:5000';
-        } else if (hostname.includes('vercel.app')) {
-          apiBase = 'https://soufiam-erp-backend.onrender.com';
-        } else {
-          apiBase = 'https://soufiam-erp-backend.onrender.com';
-        }
-      } else {
-        apiBase = 'https://soufiam-erp-backend.onrender.com';
-      }
+      // Force localhost for development
+      let apiBase = 'http://localhost:5000';
+      console.log('🔍 AuthContext using API base:', apiBase);
       
       // Call logout endpoint to clear server-side cookies
       await fetch(`${apiBase}/api/auth/logout`, {

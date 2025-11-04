@@ -1,0 +1,56 @@
+{
+  "startedAt": "2025-09-30T13:01:29.594Z",
+  "dbUrlMasked": "unknown",
+  "steps": [
+    {
+      "name": "health",
+      "ok": true,
+      "data": {
+        "status": "ok",
+        "timestamp": "2025-09-30T13:01:29.636Z"
+      }
+    },
+    {
+      "name": "auth",
+      "ok": true,
+      "data": {
+        "mode": "login",
+        "ok": true
+      }
+    },
+    {
+      "name": "price-list",
+      "ok": true,
+      "data": {
+        "count": 20,
+        "sampleTypes": {
+          "fee_usd": "string",
+          "fee_lbp": "string",
+          "third_party_fee_usd": "string",
+          "third_party_fee_lbp": "string"
+        }
+      }
+    },
+    {
+      "name": "create-order",
+      "ok": true,
+      "data": {
+        "id": 85,
+        "computed_total_usd": "12.50",
+        "computed_total_lbp": "0"
+      }
+    },
+    {
+      "name": "accounting-thirdparty",
+      "ok": false,
+      "error": {
+        "success": false,
+        "message": "Failed to fetch third parties accounting data",
+        "error": "column tp.phone does not exist",
+        "data": []
+      }
+    }
+  ],
+  "success": false,
+  "finishedAt": "2025-09-30T13:01:33.026Z"
+}

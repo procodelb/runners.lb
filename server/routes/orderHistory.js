@@ -24,9 +24,9 @@ router.get('/', authenticateToken, async (req, res) => {
     let filterConditions = [];
     let filterParams = [];
 
-    // Base condition for completed orders
-    filterConditions.push('(o.status IN (?, ?, ?) OR (o.status = ? AND o.payment_status = ?))');
-    filterParams.push('completed', 'delivered', 'cancelled', 'delivered', 'paid');
+    // Base condition for completed orders (including cashed out orders)
+    filterConditions.push('(o.status IN (?, ?, ?) OR (o.status = ? AND o.payment_status = ?) OR o.moved_to_history = ?)');
+    filterParams.push('completed', 'delivered', 'cancelled', 'delivered', 'paid', true);
 
     if (from_date) {
       filterConditions.push(`(o.completed_at >= ? OR o.created_at >= ?)`);

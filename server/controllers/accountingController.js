@@ -48,7 +48,7 @@ async function getEntities(req, res) {
              COALESCE(SUM(CASE WHEN (o.moved_to_history = false OR o.moved_to_history IS NULL) THEN o.computed_total_usd ELSE 0 END),0) AS uncashed_total_usd,
              COALESCE(SUM(CASE WHEN (o.moved_to_history = false OR o.moved_to_history IS NULL) THEN o.computed_total_lbp ELSE 0 END),0) AS uncashed_total_lbp
       FROM orders o
-      WHERE o.third_party_name IS NOT NULL AND o.third_party_name != ''
+      WHERE o.third_party_name IS NOT NULL AND TRIM(o.third_party_name) != ''
         ${search ? 'AND LOWER(o.third_party_name) LIKE LOWER($1)' : ''}
       GROUP BY o.third_party_name
       ORDER BY uncashed_total_usd DESC

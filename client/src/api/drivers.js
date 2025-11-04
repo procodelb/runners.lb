@@ -7,6 +7,12 @@ export const driversApi = {
     return response.data;
   },
 
+  // Alias for getAll to match the expected function name
+  getDrivers: async () => {
+    const response = await api.get('/drivers');
+    return response.data?.data || []; // Return the data array directly
+  },
+
   // Get driver by ID
   getById: async (id) => {
     const response = await api.get(`/drivers/${id}`);

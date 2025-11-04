@@ -90,18 +90,25 @@ const ExcelOrderForm = ({ onClose, onSuccess }) => {
     const updatedOrders = [...orders];
     updatedOrders[rowIndex] = { ...updatedOrders[rowIndex], brand_name: value };
     
-    // Find matching client and auto-fill
+    // Find matching client and auto-fill client_id
     const client = template?.options?.clients?.find(c => 
-      c.name.toLowerCase() === value.toLowerCase()
+      (c.business_name && c.business_name.toLowerCase() === value.toLowerCase()) ||
+      (c.name && c.name.toLowerCase() === value.toLowerCase())
     );
     
     if (client) {
-      // You can extend this to fetch full client details from API
       updatedOrders[rowIndex] = {
         ...updatedOrders[rowIndex],
-        customer_name: client.name, // This would be the actual client name
-        customer_phone: '', // Fetch from client data
-        customer_address: '' // Fetch from client data
+        client_id: client.id, // Link to CRM client
+        // Auto-fill delivery fees if available
+        delivery_fee_usd: client.default_delivery_fee_usd || updatedOrders[rowIndex].delivery_fee_usd,
+        delivery_fee_lbp: client.default_delivery_fee_lbp || updatedOrders[rowIndex].delivery_fee_lbp
+      };
+    } else {
+      // Clear client_id if no match found
+      updatedOrders[rowIndex] = {
+        ...updatedOrders[rowIndex],
+        client_id: null
       };
     }
     
@@ -435,7 +442,7 @@ const ExcelOrderForm = ({ onClose, onSuccess }) => {
                   Address
                 </th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Brand Name
+                  Client (from CRM)
                 </th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Driver
@@ -540,12 +547,12 @@ const ExcelOrderForm = ({ onClose, onSuccess }) => {
                       value={order.brand_name || ''}
                       onChange={(e) => handleBrandNameChange(index, e.target.value)}
                       className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
-                      placeholder="Brand name"
+                      placeholder="Client business name"
                       list={`brands-${index}`}
                     />
                     <datalist id={`brands-${index}`}>
                       {template?.options?.clients?.map(client => (
-                        <option key={client.id} value={client.name} />
+                        <option key={client.id} value={client.business_name || client.name} />
                       ))}
                     </datalist>
                   </td>

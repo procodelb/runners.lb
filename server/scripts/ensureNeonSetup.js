@@ -157,6 +157,10 @@ async function ensureAllTables() {
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS longitude NUMERIC(10,6);
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS location_text TEXT;
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS external_id TEXT;
+    -- Compatibility columns referenced by API queries
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS computed_total_usd NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS computed_total_lbp BIGINT DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS accounting_cashed BOOLEAN DEFAULT false;
   `);
 
   // Transactions table

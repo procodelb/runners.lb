@@ -1,0 +1,56 @@
+{
+  "startedAt": "2025-09-30T12:57:01.027Z",
+  "dbUrlMasked": "unknown",
+  "steps": [
+    {
+      "name": "health",
+      "ok": true,
+      "data": {
+        "status": "ok",
+        "timestamp": "2025-09-30T12:57:01.085Z"
+      }
+    },
+    {
+      "name": "auth",
+      "ok": true,
+      "data": {
+        "mode": "login",
+        "ok": true
+      }
+    },
+    {
+      "name": "price-list",
+      "ok": true,
+      "data": {
+        "count": 20,
+        "sampleTypes": {
+          "fee_usd": "string",
+          "fee_lbp": "string",
+          "third_party_fee_usd": "string",
+          "third_party_fee_lbp": "string"
+        }
+      }
+    },
+    {
+      "name": "create-order",
+      "ok": false,
+      "error": {
+        "success": false,
+        "message": "Failed to create order",
+        "error": "null value in column \"order_ref\" of relation \"orders\" violates not-null constraint"
+      }
+    },
+    {
+      "name": "accounting-thirdparty",
+      "ok": false,
+      "error": {
+        "success": false,
+        "message": "Failed to fetch third parties accounting data",
+        "error": "column tp.phone does not exist",
+        "data": []
+      }
+    }
+  ],
+  "success": false,
+  "finishedAt": "2025-09-30T12:57:05.399Z"
+}

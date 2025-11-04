@@ -1,11 +1,14 @@
 const express = require('express');
 const { query, run, usdToLbp, lbpToUsd } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { computeDisplayedAmounts } = require('../utils/computeDisplayedAmounts');
 const router = express.Router();
 
 // Batch create orders
 router.post('/', authenticateToken, async (req, res) => {
-  const client = await require('../config/database').pool.connect();
+  const { getPool } = require('../config/database');
+  const pool = getPool();
+  const client = await pool.connect();
   
   try {
     const { orders } = req.body;
@@ -63,7 +66,7 @@ router.post('/', authenticateToken, async (req, res) => {
           delivery_fee_lbp: 0,
           status: orderData.status || 'new',
           payment_status: orderData.payment_status || 'unpaid',
-          prepaid_status: Boolean(orderData.prepaid_status) || false,
+          prepaid_status: orderData.prepaid_status === 'prepaid' ? 'prepaid' : 'not_prepaid',
           latitude: orderData.latitude || null,
           longitude: orderData.longitude || null,
           location_text: orderData.location_text || '',
@@ -99,31 +102,41 @@ router.post('/', authenticateToken, async (req, res) => {
         // Support third_party_id if provided
         const thirdPartyId = orderData.third_party_id || null;
 
-        // Insert order
+        // Insert order - handle optional fields that may not exist in all schema versions
         const insertQuery = `
           INSERT INTO orders (
             order_ref, type, is_purchase, customer_phone, customer_name, customer_address,
-            brand_name, voucher_code, deliver_method, delivery_mode, third_party_name, third_party_id,
+            brand_name, client_id, voucher_code, deliver_method, third_party_name, third_party_id,
             third_party_fee_usd, third_party_fee_lbp, driver_id, driver_fee_usd, driver_fee_lbp,
             instant, notes, total_usd, total_lbp, delivery_fee_usd, delivery_fee_lbp,
-            status, payment_status, prepaid_status, latitude, longitude, location_text, created_by
+            status, payment_status, latitude, longitude, location_text, created_by
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
           ) RETURNING *
         `;
 
         const values = [
           order.order_ref, order.type, order.is_purchase, order.customer_phone, order.customer_name,
-          order.customer_address, order.brand_name, order.voucher_code, order.deliver_method,
-          order.delivery_mode, order.third_party_name, thirdPartyId, order.third_party_fee_usd, order.third_party_fee_lbp,
+          order.customer_address, order.brand_name, orderData.client_id || null, order.voucher_code, order.deliver_method,
+          order.third_party_name, thirdPartyId, order.third_party_fee_usd, order.third_party_fee_lbp,
           order.driver_id, order.driver_fee_usd, order.driver_fee_lbp, order.instant, order.notes,
           order.total_usd, order.total_lbp, order.delivery_fee_usd, order.delivery_fee_lbp,
-          order.status, order.payment_status, order.prepaid_status, order.latitude, order.longitude,
+          order.status, order.payment_status, order.latitude, order.longitude,
           order.location_text, order.created_by
         ];
 
         const result = await client.query(insertQuery, values);
-        createdOrders.push(result.rows[0]);
+        const createdOrder = result.rows[0];
+        
+        // Calculate and update computed values
+        const computed = computeDisplayedAmounts(createdOrder);
+        await client.query(`
+          UPDATE orders 
+          SET computed_total_usd = $1, computed_total_lbp = $2
+          WHERE id = $3
+        `, [computed.computedTotalUSD, computed.computedTotalLBP, createdOrder.id]);
+        
+        createdOrders.push(createdOrder);
 
       } catch (error) {
         errors.push(`Order ${i + 1}: ${error.message}`);
@@ -163,7 +176,9 @@ router.post('/', authenticateToken, async (req, res) => {
 
 // Batch assign driver to orders
 router.patch('/assign', authenticateToken, async (req, res) => {
-  const client = await require('../config/database').pool.connect();
+  const { getPool } = require('../config/database');
+  const pool = getPool();
+  const client = await pool.connect();
   
   try {
     const { order_ids, driver_id } = req.body;
@@ -184,12 +199,17 @@ router.patch('/assign', authenticateToken, async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Update all orders
+    // Update all orders - set status to 'assigned' only if current status is 'new'
     const updateQuery = `
       UPDATE orders 
-      SET driver_id = $1, status = 'assigned', updated_at = now()
+      SET driver_id = $1, 
+          status = CASE 
+            WHEN status = 'new' THEN 'assigned' 
+            ELSE status 
+          END,
+          updated_at = now()
       WHERE id = ANY($2)
-      RETURNING id, order_ref, driver_id, status
+      RETURNING id, order_ref, driver_id, status, customer_name
     `;
 
     const result = await client.query(updateQuery, [driver_id, order_ids]);
@@ -236,7 +256,8 @@ router.get('/clients/search', authenticateToken, async (req, res) => {
         address,
         instagram,
         website,
-        google_location
+        google_location,
+        COALESCE(client_type, 'BUSINESS') as client_type
       FROM clients 
       WHERE LOWER(business_name) LIKE LOWER($1) 
          OR LOWER(contact_person) LIKE LOWER($1)

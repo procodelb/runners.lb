@@ -1,194 +1,186 @@
 const express = require('express');
-const { query, run, usdToLbp, lbpToUsd, getExchangeRate } = require('../config/database');
-const { authenticateToken, requireAnyRole } = require('../middleware/auth');
 const router = express.Router();
+const { authenticateToken } = require('../middleware/auth');
+const mcp = require('../mcp');
 
-// Get all transactions with filtering and pagination
+// Get transactions with pagination and filtering
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { 
-      page = 1, 
-      limit = 20, 
-      tx_type = '', 
-      actor_type = '',
-      actor_id = '',
-      from_date = '',
-      to_date = '',
-      group_by = 'date',
-      sortBy = 'created_at',
-      sortOrder = 'DESC'
+      limit = 10, 
+      offset = 0, 
+      type = 'all',
+      from_date,
+      to_date,
+      actor_type 
     } = req.query;
-
-    const offset = (page - 1) * limit;
     
-    // Build filter conditions
-    let filterConditions = [];
-    let filterParams = [];
-
-    if (tx_type) {
-      filterConditions.push(`t.tx_type = ?`);
-      filterParams.push(tx_type);
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+    
+    // Check if we're using SQLite or PostgreSQL - same logic as database.js
+    const isSQLite = String(process.env.USE_SQLITE || '').toLowerCase() === 'true';
+    const paramPlaceholder = isSQLite ? '?' : '$';
+    
+    if (type !== 'all') {
+      whereClause += ` AND ${isSQLite ? 'type' : 'tx_type'} = ${isSQLite ? '?' : '$' + paramIndex}`;
+      params.push(type);
+      paramIndex++;
     }
-
+    
+    if (from_date) {
+      whereClause += ` AND created_at >= ${isSQLite ? '?' : '$' + paramIndex}`;
+      params.push(from_date);
+      paramIndex++;
+    }
+    
+    if (to_date) {
+      whereClause += ` AND created_at <= ${isSQLite ? '?' : '$' + paramIndex}`;
+      params.push(to_date);
+      paramIndex++;
+    }
+    
     if (actor_type) {
-      filterConditions.push(`t.actor_type = ?`);
-      filterParams.push(actor_type);
+      whereClause += ` AND actor_type = ${isSQLite ? '?' : '$' + paramIndex}`;
+      params.push(actor_type);
+      paramIndex++;
     }
-
-    if (actor_id) {
-      filterConditions.push(`t.actor_id = ?`);
-      filterParams.push(actor_id);
-    }
-
-    if (from_date) { filterConditions.push(`t.created_at >= ?`); filterParams.push(from_date); }
-    if (to_date) { filterConditions.push(`t.created_at <= ?`); filterParams.push(to_date); }
-
-    const whereClause = filterConditions.length > 0 
-      ? `WHERE ${filterConditions.join(' AND ')}` 
-      : '';
-
-    // Get total count
-    const countQuery = `SELECT COUNT(*) as count FROM transactions t ${whereClause}`;
-    const countResult = await query(countQuery, filterParams);
-    const totalCount = countResult[0]?.count || 0;
-
-    // Get transactions with pagination and proper joins
+    
+    const typeColumn = isSQLite ? 'type' : 'tx_type';
+    
+    // Get transactions from both transactions table and cashbox_entries
     const transactionsQuery = `
-      SELECT 
-        t.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name,
-        c.business_name as client_name,
-        o.order_ref as order_reference
-      FROM transactions t
-      LEFT JOIN users u ON t.created_by = u.id
-      LEFT JOIN drivers d ON t.actor_type = 'driver' AND t.actor_id = d.id
-      LEFT JOIN clients c ON t.actor_type = 'client' AND t.actor_id = c.id
-      LEFT JOIN orders o ON t.order_id = o.id
-      ${whereClause}
-      ORDER BY t.${sortBy} ${sortOrder}
-      LIMIT ? OFFSET ?
+      SELECT * FROM (
+        SELECT 
+          t.id,
+          t.${typeColumn} as type,
+          t.amount_usd,
+          t.amount_lbp,
+          t.actor_type,
+          t.actor_id,
+          t.description,
+          t.created_at,
+          ${isSQLite ? 't.created_at' : 't.updated_at'} as updated_at,
+          u.full_name as created_by_name,
+          'transaction' as source
+        FROM transactions t
+        LEFT JOIN users u ON t.created_by = u.id
+        ${whereClause.replace('tx_type', typeColumn)}
+        
+        ${!isSQLite ? `
+        UNION ALL
+        
+        SELECT 
+          ce.id,
+          ce.entry_type as type,
+          ce.amount_usd,
+          ce.amount_lbp,
+          ce.actor_type,
+          ce.actor_id,
+          ce.description,
+          ce.created_at,
+          ce.created_at as updated_at,
+          u.full_name as created_by_name,
+          'cashbox' as source
+        FROM cashbox_entries ce
+        LEFT JOIN users u ON ce.created_by = u.id
+        ${whereClause.replace('tx_type', 'entry_type')}
+        ` : ''}
+      ) combined
+      ORDER BY created_at DESC
+      LIMIT ${isSQLite ? '?' : '$' + paramIndex} OFFSET ${isSQLite ? '?' : '$' + (paramIndex + 1)}
     `;
     
-    filterParams.push(limit, offset);
-    const transactionsResult = await query(transactionsQuery, filterParams);
-
-    // Group transactions if requested
-    let groupedData = transactionsResult;
-    if (group_by === 'person') {
-      groupedData = groupTransactionsByPerson(transactionsResult);
-    } else if (group_by === 'type') {
-      groupedData = groupTransactionsByType(transactionsResult);
-    }
-
+    params.push(parseInt(limit), parseInt(offset));
+    
+    const transactions = await mcp.queryWithJoins(transactionsQuery, params);
+    
+    // Get total count for pagination
+    const countQuery = `
+      SELECT COUNT(*) as total FROM (
+        SELECT id FROM transactions ${whereClause.replace('tx_type', typeColumn)}
+        ${!isSQLite ? `
+        UNION ALL
+        SELECT id FROM cashbox_entries ${whereClause.replace('tx_type', 'entry_type')}
+        ` : ''}
+      ) combined
+    `;
+    
+    const countParams = params.slice(0, -2); // Remove limit and offset
+    const countResult = await mcp.queryWithJoins(countQuery, countParams);
+    const total = parseInt(countResult[0]?.total || 0);
+    
     res.json({
       success: true,
-      data: groupedData || [],
+      data: transactions,
       pagination: {
-        page: parseInt(page),
+        total,
         limit: parseInt(limit),
-        total: totalCount,
-        pages: Math.ceil(totalCount / limit)
+        offset: parseInt(offset),
+        pages: Math.ceil(total / parseInt(limit))
       }
     });
   } catch (error) {
     console.error('Error fetching transactions:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to fetch transactions',
-      error: error.message,
-      data: [] // Always return empty array on error
+      error: error.message
     });
   }
 });
 
-// Helper function to group transactions by person
-function groupTransactionsByPerson(transactions) {
-  const groups = {};
-  
-  transactions.forEach(tx => {
-    const key = tx.actor_type === 'driver' ? tx.driver_name : 
-                tx.actor_type === 'client' ? tx.client_name : 
-                tx.actor_type || 'other';
-    
-    if (!groups[key]) {
-      groups[key] = {
-        name: key,
-        type: tx.actor_type,
-        transactions: [],
-        total_usd: 0,
-        total_lbp: 0
-      };
-    }
-    
-    groups[key].transactions.push(tx);
-    groups[key].total_usd += parseFloat(tx.amount_usd || 0);
-    groups[key].total_lbp += parseFloat(tx.amount_lbp || 0);
-  });
-  
-  return Object.values(groups);
-}
-
-// Helper function to group transactions by type
-function groupTransactionsByType(transactions) {
-  const groups = {};
-  
-  transactions.forEach(tx => {
-    const key = tx.tx_type || 'other';
-    
-    if (!groups[key]) {
-      groups[key] = {
-        type: key,
-        transactions: [],
-        total_usd: 0,
-        total_lbp: 0
-      };
-    }
-    
-    groups[key].transactions.push(tx);
-    groups[key].total_usd += parseFloat(tx.amount_usd || 0);
-    groups[key].total_lbp += parseFloat(tx.amount_lbp || 0);
-  });
-  
-  return Object.values(groups);
-}
-
-// Get single transaction
+// Get transaction by ID
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    const transactionQuery = `
+    // Check if we're using SQLite or PostgreSQL - same logic as database.js
+    const isSQLite = String(process.env.USE_SQLITE || '').toLowerCase() === 'true';
+    const paramPlaceholder = isSQLite ? '?' : '$1';
+    
+    // Try to find in transactions table first
+    let transaction = await mcp.queryWithJoins(`
       SELECT 
         t.*,
         u.full_name as created_by_name,
-        d.full_name as driver_name,
-        c.business_name as client_name
+        'transaction' as source
       FROM transactions t
       LEFT JOIN users u ON t.created_by = u.id
-      LEFT JOIN drivers d ON t.actor_type = 'driver' AND t.actor_id = d.id
-      LEFT JOIN clients c ON t.actor_type = 'client' AND t.actor_id = c.id
-      WHERE t.id = ?
-    `;
-    const result = await query(transactionQuery, [id]);
+      WHERE t.id = ${paramPlaceholder}
+    `, [id]);
     
-    if (result.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Transaction not found' 
+    // If not found and using PostgreSQL, try cashbox_entries
+    if (transaction.length === 0 && !isSQLite) {
+      transaction = await mcp.queryWithJoins(`
+        SELECT 
+          ce.*,
+          u.full_name as created_by_name,
+          'cashbox' as source
+        FROM cashbox_entries ce
+        LEFT JOIN users u ON ce.created_by = u.id
+        WHERE ce.id = ${paramPlaceholder}
+      `, [id]);
+    }
+    
+    if (transaction.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction not found'
       });
     }
-
+    
     res.json({
       success: true,
-      data: result[0] || {}
+      data: transaction[0]
     });
   } catch (error) {
     console.error('Error fetching transaction:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to fetch transaction',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -205,76 +197,48 @@ router.post('/', authenticateToken, async (req, res) => {
       debit_account,
       credit_account,
       description,
-      order_id,
       category,
-      direction
+      direction,
+      order_id
     } = req.body;
-
-    if (!tx_type) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Transaction type is required' 
+    
+    const userId = req.user.id;
+    
+    if (!tx_type || !description) {
+      return res.status(400).json({
+        success: false,
+        message: 'Transaction type and description are required'
       });
     }
-
-    // Compute missing currency
-    let amtUsd = Number(amount_usd || 0);
-    let amtLbp = Number(amount_lbp || 0);
-    if (amtUsd > 0 && (!amtLbp || amtLbp === 0)) {
-      amtLbp = await usdToLbp(amtUsd);
-    } else if (amtLbp > 0 && (!amtUsd || amtUsd === 0)) {
-      amtUsd = await lbpToUsd(amtLbp);
-    }
-    if (amtUsd < 0 || amtLbp < 0) {
-      return res.status(400).json({ success: false, message: 'Amounts must be non-negative' });
-    }
-
-    const insertQuery = `
-      INSERT INTO transactions (
-        tx_type, amount_usd, amount_lbp, actor_type, actor_id,
-        debit_account, credit_account, description, order_id, category, direction, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const params = [
-      tx_type, amtUsd, amtLbp, actor_type, actor_id,
-      debit_account, credit_account, description, order_id || null, category || null, direction || null, req.user.id
-    ];
-
-    const result = await run(insertQuery, params);
-
-    // Emit socket event
-    try {
-      const io = req.app.get('io');
-      if (io) io.emit('transaction:created', { id: result.id, tx_type, amount_usd: amtUsd, amount_lbp: amtLbp });
-    } catch {}
-
-    // Fetch the created transaction
-    const transactionQuery = `
-      SELECT 
-        t.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name,
-        c.business_name as client_name
-      FROM transactions t
-      LEFT JOIN users u ON t.created_by = u.id
-      LEFT JOIN drivers d ON t.actor_type = 'driver' AND t.actor_id = d.id
-      LEFT JOIN clients c ON t.actor_type = 'client' AND t.actor_id = c.id
-      WHERE t.id = ?
-    `;
-    const transactionResult = await query(transactionQuery, [result.id]);
-
+    
+    const transaction = await mcp.create('transactions', {
+      tx_type,
+      amount_usd: Number(amount_usd),
+      amount_lbp: Number(amount_lbp),
+      actor_type,
+      actor_id,
+      debit_account,
+      credit_account,
+      description,
+      category,
+      direction,
+      order_id,
+      created_by: userId,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    });
+    
     res.status(201).json({
       success: true,
       message: 'Transaction created successfully',
-      data: transactionResult[0] || {}
+      data: transaction
     });
   } catch (error) {
     console.error('Error creating transaction:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to create transaction',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -283,62 +247,29 @@ router.post('/', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const updateData = req.body;
-
+    const updateData = {
+      ...req.body,
+      updated_at: new Date().toISOString()
+    };
+    
     // Remove fields that shouldn't be updated
     delete updateData.id;
     delete updateData.created_at;
     delete updateData.created_by;
-
-    const fields = Object.keys(updateData);
-    const values = Object.values(updateData);
     
-    if (fields.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No fields to update' 
-      });
-    }
-
-    const setClause = fields.map(field => `${field} = ?`).join(', ');
-    const updateQuery = `UPDATE transactions SET ${setClause} WHERE id = ?`;
+    const updatedTransaction = await mcp.update('transactions', id, updateData);
     
-    values.push(id);
-    await run(updateQuery, values);
-
-    // Fetch the updated transaction
-    const transactionQuery = `
-      SELECT 
-        t.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name,
-        c.business_name as client_name
-      FROM transactions t
-      LEFT JOIN users u ON t.created_by = u.id
-      LEFT JOIN drivers d ON t.actor_type = 'driver' AND t.actor_id = d.id
-      LEFT JOIN clients c ON t.actor_type = 'client' AND t.actor_id = c.id
-      WHERE t.id = ?
-    `;
-    const transactionResult = await query(transactionQuery, [id]);
-
-    if (transactionResult.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Transaction not found' 
-      });
-    }
-
     res.json({
       success: true,
       message: 'Transaction updated successfully',
-      data: transactionResult[0] || {}
+      data: updatedTransaction
     });
   } catch (error) {
     console.error('Error updating transaction:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to update transaction',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -348,247 +279,87 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    const deleteQuery = 'DELETE FROM transactions WHERE id = ?';
-    const result = await run(deleteQuery, [id]);
-
-    if (result.changes === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Transaction not found' 
-      });
-    }
-
+    await mcp.delete('transactions', id);
+    
     res.json({
       success: true,
       message: 'Transaction deleted successfully'
     });
   } catch (error) {
     console.error('Error deleting transaction:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to delete transaction',
-      error: error.message 
+      error: error.message
     });
   }
 });
 
-// Print transaction receipt
-router.get('/:id/print', authenticateToken, async (req, res) => {
+// Get transaction statistics
+router.get('/stats/summary', authenticateToken, async (req, res) => {
   try {
-    const { id } = req.params;
+    const { from_date, to_date } = req.query;
     
-    const transactionQuery = `
-      SELECT 
-        t.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name,
-        c.business_name as client_name
-      FROM transactions t
-      LEFT JOIN users u ON t.created_by = u.id
-      LEFT JOIN drivers d ON t.actor_type = 'driver' AND t.actor_id = d.id
-      LEFT JOIN clients c ON t.actor_type = 'client' AND t.actor_id = c.id
-      WHERE t.id = ?
-    `;
-    const result = await query(transactionQuery, [id]);
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
     
-    if (result.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Transaction not found' 
-      });
+    // Check if we're using SQLite or PostgreSQL - same logic as database.js
+    const isSQLite = String(process.env.USE_SQLITE || '').toLowerCase() === 'true';
+    
+    if (from_date) {
+      whereClause += ` AND created_at >= ${isSQLite ? '?' : '$' + paramIndex}`;
+      params.push(from_date);
+      paramIndex++;
     }
-
-    const transaction = result[0];
     
-    // Generate PDF receipt (simplified version - in production you'd use a proper PDF library)
-    const receiptContent = `
-      TRANSACTION RECEIPT
-      ===================
-      
-      Receipt ID: ${transaction.id}
-      Date: ${new Date(transaction.created_at).toLocaleDateString()}
-      Time: ${new Date(transaction.created_at).toLocaleTimeString()}
-      
-              Transaction Type: ${transaction.type}
-      Amount USD: $${transaction.amount_usd || 0}
-      Amount LBP: ${(transaction.amount_lbp || 0).toLocaleString()} LBP
-      
-      Actor: ${transaction.actor_type} - ${transaction.driver_name || transaction.client_name || 'N/A'}
-      Description: ${transaction.description || 'N/A'}
-      
-      Created By: ${transaction.created_by_name || 'System'}
-      
-      ===================
-      Thank you for your business!
-    `;
-
-    // Set headers for PDF download
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=receipt-${transaction.id}.pdf`);
+    if (to_date) {
+      whereClause += ` AND created_at <= ${isSQLite ? '?' : '$' + paramIndex}`;
+      params.push(to_date);
+      paramIndex++;
+    }
     
-    // For now, return text content (in production, use a PDF library like pdfkit)
-    res.send(Buffer.from(receiptContent, 'utf8'));
-    
-  } catch (error) {
-    console.error('Error generating receipt:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to generate receipt',
-      error: error.message 
-    });
-  }
-});
-
-// Get transactions by actor type and ID
-router.get('/actor/:actorType/:actorId', authenticateToken, async (req, res) => {
-  try {
-    const { actorType, actorId } = req.params;
-    const { page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
-
-    const transactionsQuery = `
+    // Get statistics from both tables
+    const statsQuery = `
       SELECT 
-        t.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name,
-        c.business_name as client_name
-      FROM transactions t
-      LEFT JOIN users u ON t.created_by = u.id
-      LEFT JOIN drivers d ON t.actor_type = 'driver' AND t.actor_id = d.id
-      LEFT JOIN clients c ON t.actor_type = 'client' AND t.actor_id = c.id
-      WHERE t.actor_type = ? AND t.actor_id = ?
-      ORDER BY t.created_at DESC
-      LIMIT ? OFFSET ?
+        COUNT(*) as total_transactions,
+        SUM(CASE WHEN amount_usd > 0 THEN amount_usd ELSE 0 END) as total_income_usd,
+        SUM(CASE WHEN amount_lbp > 0 THEN amount_lbp ELSE 0 END) as total_income_lbp,
+        SUM(CASE WHEN amount_usd < 0 THEN ABS(amount_usd) ELSE 0 END) as total_expense_usd,
+        SUM(CASE WHEN amount_lbp < 0 THEN ABS(amount_lbp) ELSE 0 END) as total_expense_lbp
+      FROM (
+        SELECT amount_usd, amount_lbp, created_at FROM transactions ${whereClause}
+        ${!isSQLite ? `
+        UNION ALL
+        SELECT 
+          CASE WHEN entry_type IN ('income', 'cash_in', 'capital_add') THEN amount_usd ELSE -amount_usd END as amount_usd,
+          CASE WHEN entry_type IN ('income', 'cash_in', 'capital_add') THEN amount_lbp ELSE -amount_lbp END as amount_lbp,
+          created_at 
+        FROM cashbox_entries ${whereClause}
+        ` : ''}
+      ) combined
     `;
     
-    const result = await query(transactionsQuery, [actorType, actorId, limit, offset]);
-
+    const stats = await mcp.queryWithJoins(statsQuery, params);
+    
     res.json({
       success: true,
-      data: result,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: result.length
+      data: stats[0] || {
+        total_transactions: 0,
+        total_income_usd: 0,
+        total_income_lbp: 0,
+        total_expense_usd: 0,
+        total_expense_lbp: 0
       }
     });
   } catch (error) {
-    console.error('Error fetching actor transactions:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch actor transactions',
-      error: error.message 
+    console.error('Error fetching transaction stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch transaction statistics',
+      error: error.message
     });
   }
 });
 
 module.exports = router;
-
-// CSV export for transactions with same filters
-router.get('/export/csv', authenticateToken, requireAnyRole(['admin']), async (req, res) => {
-  try {
-    const { 
-      tx_type = '', 
-      actor_type = '',
-      actor_id = '',
-      from_date = '',
-      to_date = '',
-      sortBy = 'created_at',
-      sortOrder = 'DESC'
-    } = req.query;
-
-    let filterConditions = [];
-    let filterParams = [];
-    if (tx_type) { filterConditions.push(`t.tx_type = ?`); filterParams.push(tx_type); }
-    if (actor_type) { filterConditions.push(`t.actor_type = ?`); filterParams.push(actor_type); }
-    if (actor_id) { filterConditions.push(`t.actor_id = ?`); filterParams.push(actor_id); }
-    if (from_date) { filterConditions.push(`t.created_at >= ?`); filterParams.push(from_date); }
-    if (to_date) { filterConditions.push(`t.created_at <= ?`); filterParams.push(to_date); }
-
-    const whereClause = filterConditions.length > 0 ? `WHERE ${filterConditions.join(' AND ')}` : '';
-
-    const sql = `
-      SELECT 
-        t.id, t.tx_type, t.amount_usd, t.amount_lbp, t.actor_type, t.actor_id,
-        t.debit_account, t.credit_account, t.description, t.order_id, t.category, t.direction,
-        t.created_at, t.updated_at,
-        u.full_name as created_by_name,
-        d.full_name as driver_name,
-        c.business_name as client_name,
-        o.order_ref as order_reference
-      FROM transactions t
-      LEFT JOIN users u ON t.created_by = u.id
-      LEFT JOIN drivers d ON t.actor_type = 'driver' AND t.actor_id = d.id
-      LEFT JOIN clients c ON t.actor_type = 'client' AND t.actor_id = c.id
-      LEFT JOIN orders o ON t.order_id = o.id
-      ${whereClause}
-      ORDER BY t.${sortBy} ${sortOrder}
-    `;
-
-    const rows = await query(sql, filterParams);
-
-    const headers = [
-      'ID','Type','Amount USD','Amount LBP','Actor Type','Actor ID','Debit','Credit','Description','Order Ref','Category','Direction','Created By','Driver','Client','Created At','Updated At'
-    ];
-
-    const toCsvValue = (v) => {
-      if (v === null || v === undefined) return '';
-      const s = String(v);
-      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-        return '"' + s.replace(/"/g, '""') + '"';
-      }
-      return s;
-    };
-
-    const lines = [headers.join(',')];
-    for (const r of rows) {
-      const line = [
-        r.id, r.tx_type, r.amount_usd, r.amount_lbp, r.actor_type, r.actor_id, r.debit_account, r.credit_account,
-        r.description, r.order_reference, r.category, r.direction, r.created_by_name, r.driver_name, r.client_name,
-        r.created_at, r.updated_at
-      ].map(toCsvValue).join(',');
-      lines.push(line);
-    }
-
-    const csv = lines.join('\n');
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="transactions_export.csv"');
-    res.send(csv);
-  } catch (e) {
-    console.error('Error exporting transactions CSV:', e);
-    res.status(500).json({ success: false, message: 'Failed to export transactions CSV', error: e.message });
-  }
-});
-
-// Additional entity query alias endpoint: /transactions?driverId=123
-router.get('/by-entity', authenticateToken, async (req, res) => {
-  try {
-    const { driverId, clientId, thirdPartyId, page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
-
-    let where = 'WHERE 1=1';
-    const params = [];
-    if (driverId) { where += ' AND t.actor_type = \"driver\" AND t.actor_id = ?'; params.push(driverId); }
-    if (clientId) { where += ' AND t.actor_type = \"client\" AND t.actor_id = ?'; params.push(clientId); }
-    if (thirdPartyId) { where += ' AND t.actor_type = \"third_party\" AND t.actor_id = ?'; params.push(thirdPartyId); }
-
-    const sql = `
-      SELECT 
-        t.*, u.full_name as created_by_name, d.full_name as driver_name, c.business_name as client_name, o.order_ref as order_reference
-      FROM transactions t
-      LEFT JOIN users u ON t.created_by = u.id
-      LEFT JOIN drivers d ON t.actor_type = 'driver' AND t.actor_id = d.id
-      LEFT JOIN clients c ON t.actor_type = 'client' AND t.actor_id = c.id
-      LEFT JOIN orders o ON t.order_id = o.id
-      ${where}
-      ORDER BY t.created_at DESC
-      LIMIT ? OFFSET ?
-    `;
-    params.push(limit, offset);
-    const rows = await query(sql, params);
-    res.json({ success: true, data: rows, pagination: { page: parseInt(page), limit: parseInt(limit), total: rows.length } });
-  } catch (e) {
-    res.status(500).json({ success: false, message: 'Failed to fetch transactions by entity', error: e.message, data: [] });
-  }
-});
-

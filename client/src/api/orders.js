@@ -83,5 +83,43 @@ export const ordersApi = {
   getOrderStats: async () => {
     const response = await api.get('/orders/stats');
     return response.data;
+  },
+
+  // PREPAID WORKFLOW API FUNCTIONS
+
+  // Create driver advance for prepaid order
+  createPrepaidAdvance: async (orderId, advanceData) => {
+    const response = await api.post(`/orders/${orderId}/prepaid-advance`, advanceData);
+    return response.data;
+  },
+
+  // Get driver advances
+  getDriverAdvances: async (params = {}) => {
+    const response = await api.get('/orders/driver-advances', { params });
+    return response.data;
+  },
+
+  // Mark driver advance as cleared
+  clearDriverAdvance: async (advanceId, notes = '') => {
+    const response = await api.patch(`/orders/driver-advances/${advanceId}/clear`, { notes });
+    return response.data;
+  },
+
+  // Request driver reimbursement
+  reimburseDriverAdvance: async (advanceId, notes = '') => {
+    const response = await api.patch(`/orders/driver-advances/${advanceId}/reimburse`, { notes });
+    return response.data;
+  },
+
+  // Get cashbox entries
+  getCashboxEntries: async (params = {}) => {
+    const response = await api.get('/orders/cashbox-entries', { params });
+    return response.data;
+  },
+
+  // Create payment
+  createPayment: async (paymentData) => {
+    const response = await api.post('/orders/payments', paymentData);
+    return response.data;
   }
 };

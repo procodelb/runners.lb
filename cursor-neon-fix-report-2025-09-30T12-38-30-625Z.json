@@ -1,0 +1,33 @@
+{
+  "startedAt": "2025-09-30T12:38:30.626Z",
+  "dbUrlMasked": "unknown",
+  "steps": [
+    {
+      "name": "health",
+      "ok": false,
+      "error": "AggregateError"
+    },
+    {
+      "name": "auth",
+      "ok": false,
+      "error": "AggregateError"
+    },
+    {
+      "name": "price-list",
+      "ok": false,
+      "error": "AggregateError"
+    },
+    {
+      "name": "create-order",
+      "ok": false,
+      "error": "AggregateError"
+    },
+    {
+      "name": "accounting-thirdparty",
+      "ok": false,
+      "error": "AggregateError"
+    }
+  ],
+  "success": false,
+  "finishedAt": "2025-09-30T12:38:31.211Z"
+}

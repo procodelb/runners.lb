@@ -8,6 +8,7 @@ let run;
 let closeDatabase;
 let currentDatabase = 'unknown';
 let isInitialized = false;
+let pool = null; // Declare pool at module level
 
 async function initializeDatabase() {
   if (!useSQLite) {
@@ -50,7 +51,8 @@ async function initializeDatabase() {
 
       const slowMsThreshold = Number(process.env.PG_SLOW_MS || 200);
 
-      const pool = new Pool({
+      // Assign to module-level pool variable
+      pool = new Pool({
         connectionString: rawUrl,
         max: Number(process.env.PG_POOL_MAX || 10),
         idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT || 30000),
@@ -87,7 +89,7 @@ async function initializeDatabase() {
           const summary = text.replace(/\s+/g, ' ').trim().substring(0, 120);
           if (duration > slowMsThreshold) {
             console.warn(`🐢 Slow query (${duration}ms > ${slowMsThreshold}ms): ${summary}`);
-          } else {
+          } else if (process.env.NODE_ENV !== 'production') {
             console.log(`📊 Query executed in ${duration}ms: ${summary}...`);
           }
           return result.rows || [];
@@ -112,7 +114,7 @@ async function initializeDatabase() {
           const summary = pgText.replace(/\s+/g, ' ').trim().substring(0, 120);
           if (duration > slowMsThreshold) {
             console.warn(`🐢 Slow run (${duration}ms > ${slowMsThreshold}ms): ${summary}`);
-          } else {
+          } else if (process.env.NODE_ENV !== 'production') {
             console.log(`📊 Run executed in ${duration}ms: ${summary}...`);
           }
           if (/^insert\s+/i.test(pgText)) {
@@ -129,19 +131,20 @@ async function initializeDatabase() {
       };
 
       closeDatabase = async () => {
-        await pool.end();
-        console.log('✅ PostgreSQL pool closed');
+        if (pool) {
+          await pool.end();
+          console.log('✅ PostgreSQL pool closed');
+        }
       };
 
-      module.exports.pool = pool;
       isInitialized = true;
       return true;
     } catch (error) {
       console.error('❌ PostgreSQL connection failed:', error.message);
-      console.error(`📋 Troubleshooting:
- - Verify DATABASE_URL credentials (user/password/db/host)
- - Ensure Neon project allows connections and password is correct
- - Keep sslmode=require and channel_binding=require in your URL`);
+      console.error('📋 Troubleshooting:');
+      console.error(' - Verify DATABASE_URL credentials (user/password/db/host)');
+      console.error(' - Ensure Neon project allows connections and password is correct');
+      console.error(' - Keep sslmode=require and channel_binding=require in your URL');
       return false;
     }
   }
@@ -269,3 +272,24 @@ module.exports.lbpToUsd = lbpToUsd;
 module.exports.closeDatabase = closeDatabase;
 module.exports.currentDatabase = () => currentDatabase;
 module.exports.isInitialized = () => isInitialized;
+
+// Export pool with getter to ensure it's initialized
+// Use Object.defineProperty to create a getter that checks initialization
+Object.defineProperty(module.exports, 'pool', {
+  get: function() {
+    if (!pool) {
+      throw new Error('Database pool not initialized yet. Wait for database initialization to complete.');
+    }
+    return pool;
+  },
+  enumerable: true,
+  configurable: false
+});
+
+// Also provide a getter function that ensures pool is available (alternative access method)
+module.exports.getPool = () => {
+  if (!pool) {
+    throw new Error('Database pool not initialized. Wait for database initialization to complete.');
+  }
+  return pool;
+};

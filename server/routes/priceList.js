@@ -78,36 +78,7 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Get single price list item
-router.get('/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const priceListQuery = 'SELECT id, country, area, fees_usd as fee_usd, fees_lbp as fee_lbp, COALESCE(is_active, true) as is_active, created_at, updated_at FROM price_list WHERE id = ?';
-    const result = await query(priceListQuery, [id]);
-    
-    if (result.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Price list item not found' 
-      });
-    }
-
-    res.json({
-      success: true,
-      data: result[0]
-    });
-  } catch (error) {
-    console.error('Error fetching price list item:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch price list item',
-      error: error.message 
-    });
-  }
-});
-
-// Search price list items for autocomplete
+// Search price list items for autocomplete - MUST come before /:id route
 router.get('/search', authenticateToken, async (req, res) => {
   try {
     const { q = '' } = req.query;
@@ -150,6 +121,43 @@ router.get('/search', authenticateToken, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to search price list',
+      error: error.message 
+    });
+  }
+});
+
+// Get single price list item
+router.get('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Validate that id is a number to prevent search parameter confusion
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid price list item ID. ID must be a number.' 
+      });
+    }
+    
+    const priceListQuery = 'SELECT id, country, area, fees_usd as fee_usd, fees_lbp as fee_lbp, COALESCE(is_active, true) as is_active, created_at, updated_at FROM price_list WHERE id = ?';
+    const result = await query(priceListQuery, [id]);
+    
+    if (result.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Price list item not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      data: result[0]
+    });
+  } catch (error) {
+    console.error('Error fetching price list item:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch price list item',
       error: error.message 
     });
   }
@@ -215,6 +223,15 @@ router.post('/', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate that id is a number
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid price list item ID. ID must be a number.' 
+      });
+    }
+    
     const updateData = req.body;
 
     // Remove fields that shouldn't be updated
@@ -276,6 +293,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.patch('/:id/toggle-status', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate that id is a number
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid price list item ID. ID must be a number.' 
+      });
+    }
+    
     const { is_active } = req.body;
 
     const updateQuery = `UPDATE price_list SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
@@ -320,6 +346,14 @@ router.patch('/:id/toggle-status', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate that id is a number
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid price list item ID. ID must be a number.' 
+      });
+    }
     
     const deleteQuery = 'DELETE FROM price_list WHERE id = ?';
     const result = await run(deleteQuery, [id]);

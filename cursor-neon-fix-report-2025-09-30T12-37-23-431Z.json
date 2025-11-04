@@ -1,0 +1,42 @@
+{
+  "startedAt": "2025-09-30T12:37:23.434Z",
+  "dbUrlMasked": "unknown",
+  "steps": [
+    {
+      "name": "health",
+      "ok": true,
+      "data": {
+        "status": "ok",
+        "timestamp": "2025-09-30T12:37:23.483Z"
+      }
+    },
+    {
+      "name": "price-list",
+      "ok": false,
+      "error": {
+        "success": false,
+        "message": "Access token required"
+      }
+    },
+    {
+      "name": "auth",
+      "ok": true,
+      "data": {
+        "mode": "login",
+        "ok": true
+      }
+    },
+    {
+      "name": "create-order",
+      "ok": false,
+      "error": "read ECONNRESET"
+    },
+    {
+      "name": "accounting-thirdparty",
+      "ok": false,
+      "error": "AggregateError"
+    }
+  ],
+  "success": false,
+  "finishedAt": "2025-09-30T12:37:25.429Z"
+}

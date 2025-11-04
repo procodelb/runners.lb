@@ -16,7 +16,8 @@ import {
   X,
   Save,
   Loader2,
-  Map
+  Map,
+  Copy
 } from 'lucide-react';
 import api from '../api';
 import toast from 'react-hot-toast';
@@ -24,10 +25,13 @@ import toast from 'react-hot-toast';
 const CRM = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedClientType, setSelectedClientType] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingClient, setEditingClient] = useState(null);
   const [formData, setFormData] = useState({
+    client_type: 'BUSINESS',
     business_name: '',
+    client_name: '',
     contact_person: '',
     phone: '',
     address: '',
@@ -42,8 +46,8 @@ const CRM = () => {
 
   // Fetch clients with search and filter
   const { data: clients, isLoading } = useQuery(
-    ['clients', searchTerm, selectedCategory],
-    () => api.get(`/clients?search=${searchTerm}&category=${selectedCategory}`),
+    ['clients', searchTerm, selectedCategory, selectedClientType],
+    () => api.get(`/clients?search=${searchTerm}&category=${selectedCategory}&client_type=${selectedClientType}`),
     {
       keepPreviousData: true,
       select: (response) => response.data?.data || []
@@ -115,7 +119,9 @@ const CRM = () => {
 
   const resetForm = () => {
     setFormData({
+      client_type: 'BUSINESS',
       business_name: '',
+      client_name: '',
       contact_person: '',
       phone: '',
       address: '',
@@ -130,14 +136,16 @@ const CRM = () => {
     e.preventDefault();
     
     const payload = {
-      business_name: formData.business_name,
+      client_type: formData.client_type,
+      business_name: formData.client_type === 'BUSINESS' ? formData.business_name : formData.client_name,
+      client_name: formData.client_type === 'INDIVIDUAL' ? formData.client_name : '',
       contact_person: formData.contact_person,
       phone: formData.phone,
       address: formData.address,
       instagram: formData.instagram,
       website: formData.website,
-      google_location: formData.google_map_link || '',
-      category: formData.category
+      google_map_link: formData.google_map_link || '',
+      category: formData.client_type === 'BUSINESS' ? formData.category : ''
     };
 
     if (editingClient) {
@@ -150,7 +158,9 @@ const CRM = () => {
   const handleEdit = (client) => {
     setEditingClient(client);
     setFormData({
-      business_name: client.business_name || '',
+      client_type: client.client_type || 'BUSINESS',
+      business_name: client.client_type === 'BUSINESS' ? (client.business_name || '') : '',
+      client_name: client.client_type === 'INDIVIDUAL' ? (client.business_name || '') : '',
       contact_person: client.contact_person || '',
       phone: client.phone || '',
       address: client.address || '',
@@ -174,6 +184,24 @@ const CRM = () => {
       ...prev,
       [name]: value
     }));
+  };
+
+  const copyClientInfo = (client) => {
+    const clientInfo = `
+Client Information:
+Type: ${client.client_type || 'BUSINESS'}
+${client.client_type === 'BUSINESS' ? 'Business Name' : 'Client Name'}: ${client.business_name}
+Contact Person: ${client.contact_person || 'N/A'}
+Phone: ${client.phone || 'N/A'}
+Address: ${client.address || 'N/A'}
+Instagram: ${client.instagram || 'N/A'}
+Website: ${client.website || 'N/A'}
+Google Map Link: ${client.google_location || 'N/A'}
+${client.client_type === 'BUSINESS' && client.category ? `Category: ${client.category}` : ''}
+    `.trim();
+    
+    navigator.clipboard.writeText(clientInfo);
+    toast.success('Client information copied to clipboard!');
   };
 
   const getCategoryColor = (category) => {
@@ -214,7 +242,7 @@ const CRM = () => {
 
       {/* Search and Filters */}
       <div className="bg-white rounded-lg shadow-md p-4 mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
             <input
               type="text"
@@ -223,6 +251,17 @@ const CRM = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
+          </div>
+          <div>
+            <select
+              value={selectedClientType}
+              onChange={(e) => setSelectedClientType(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            >
+              <option value="">All Types</option>
+              <option value="BUSINESS">Business</option>
+              <option value="INDIVIDUAL">Individual</option>
+            </select>
           </div>
           <div>
             <select
@@ -262,18 +301,34 @@ const CRM = () => {
             animate={{ opacity: 1, y: 0 }}
             className="bg-white rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow"
           >
-            <div className="flex justify-between items-start mb-4">
+            <div className="flex justify-between items-start mb-3">
               <div className="flex-1">
-                <h3 className="text-base font-semibold text-gray-900 mb-1">
-                  {client.business_name}
-                </h3>
-                {client.category && (
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="text-base font-semibold text-gray-900">
+                    {client.business_name}
+                  </h3>
+                  <span className={`inline-flex px-2 py-0.5 text-[10px] font-semibold rounded-full ${
+                    (client.client_type || 'BUSINESS') === 'BUSINESS' 
+                      ? 'bg-blue-100 text-blue-800' 
+                      : 'bg-green-100 text-green-800'
+                  }`}>
+                    {client.client_type || 'BUSINESS'}
+                  </span>
+                </div>
+                {client.category && (client.client_type || 'BUSINESS') === 'BUSINESS' && (
                   <span className={`inline-flex px-2 py-0.5 text-[10px] font-semibold rounded-full ${getCategoryColor(client.category)}`}>
                     {client.category}
                   </span>
                 )}
               </div>
               <div className="flex space-x-2">
+                <button
+                  onClick={() => copyClientInfo(client)}
+                  className="text-gray-600 hover:text-gray-900 p-1"
+                  title="Copy all client information"
+                >
+                  <Copy className="w-4 h-4" />
+                </button>
                 <button
                   onClick={() => handleEdit(client)}
                   className="text-indigo-600 hover:text-indigo-900 p-1"
@@ -288,57 +343,68 @@ const CRM = () => {
                 </button>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {client.contact_person && (
+            
+            {/* Compact 2-column layout as requested */}
+            <div className="space-y-2">
+              {/* Row 1: Name and Phone */}
+              <div className="grid grid-cols-2 gap-2">
                 <div className="flex items-center text-xs text-gray-600">
-                  <User className="w-4 h-4 mr-1" />
-                  <span className="truncate">{client.contact_person}</span>
+                  <User className="w-3 h-3 mr-1 flex-shrink-0" />
+                  <span className="truncate">{client.contact_person || 'N/A'}</span>
                 </div>
-              )}
-              {client.phone && (
                 <div className="flex items-center text-xs text-gray-600">
-                  <Phone className="w-4 h-4 mr-1" />
-                  <span className="truncate">{client.phone}</span>
+                  <Phone className="w-3 h-3 mr-1 flex-shrink-0" />
+                  <span className="truncate">{client.phone || 'N/A'}</span>
                 </div>
-              )}
-              {client.address && (
-                <div className="flex items-center text-xs text-gray-600 col-span-2">
-                  <MapPin className="w-4 h-4 mr-1" />
-                  <span className="truncate">{client.address}</span>
-                </div>
-              )}
-              {client.instagram && (
+              </div>
+              
+              {/* Row 2: Address and Website */}
+              <div className="grid grid-cols-2 gap-2">
                 <div className="flex items-center text-xs text-gray-600">
-                  <Instagram className="w-4 h-4 mr-1" />
-                  <span className="truncate">{client.instagram}</span>
+                  <MapPin className="w-3 h-3 mr-1 flex-shrink-0" />
+                  <span className="truncate">{client.address || 'N/A'}</span>
                 </div>
-              )}
-              {client.website && (
                 <div className="flex items-center text-xs text-gray-600">
-                  <Globe className="w-4 h-4 mr-1" />
-                  <a 
-                    href={client.website.startsWith('http') ? client.website : `https://${client.website}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 truncate"
-                  >
-                    {client.website}
-                  </a>
+                  <Globe className="w-3 h-3 mr-1 flex-shrink-0" />
+                  {client.website ? (
+                    <a 
+                      href={client.website.startsWith('http') ? client.website : `https://${client.website}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-800 truncate"
+                    >
+                      {client.website}
+                    </a>
+                  ) : (
+                    <span className="truncate">N/A</span>
+                  )}
                 </div>
-              )}
-              {client.google_location && (
-                <div className="flex items-center text-xs text-gray-600 col-span-2">
-                  <Map className="w-4 h-4 mr-1" />
-                  <a
-                    href={String(client.google_location).startsWith('http') ? client.google_location : `https://www.google.com/maps/search/?api=1&query=${client.google_location}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 truncate"
-                  >
-                    Open in Google Maps
-                  </a>
+              </div>
+              
+              {/* Row 3: Instagram and Google Map Link */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex items-center text-xs text-gray-600">
+                  <Instagram className="w-3 h-3 mr-1 flex-shrink-0" />
+                  <span className="truncate">{client.instagram || 'N/A'}</span>
                 </div>
-              )}
+                <div className="flex items-center text-xs text-gray-600">
+                  <Map className="w-3 h-3 mr-1 flex-shrink-0" />
+                  {client.google_location ? (
+                    <span 
+                      className="truncate cursor-pointer text-blue-600 hover:text-blue-800 select-all font-mono text-[10px]"
+                      title="Click to copy Google Map link"
+                      onClick={() => {
+                        navigator.clipboard.writeText(client.google_location);
+                        toast.success('Google Map link copied to clipboard!');
+                      }}
+                    >
+                      {client.google_location}
+                    </span>
+                  ) : (
+                    <span className="truncate">N/A</span>
+                  )}
+                </div>
+              </div>
             </div>
           </motion.div>
         ))}
@@ -374,16 +440,49 @@ const CRM = () => {
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {/* Business Name */}
-                  <div className="md:col-span-3">
+                {/* Client Type Selection */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Client Type *
+                  </label>
+                  <div className="flex space-x-4">
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        name="client_type"
+                        value="BUSINESS"
+                        checked={formData.client_type === 'BUSINESS'}
+                        onChange={handleInputChange}
+                        className="mr-2"
+                      />
+                      <Building2 className="w-4 h-4 mr-1" />
+                      BUSINESS
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        name="client_type"
+                        value="INDIVIDUAL"
+                        checked={formData.client_type === 'INDIVIDUAL'}
+                        onChange={handleInputChange}
+                        className="mr-2"
+                      />
+                      <User className="w-4 h-4 mr-1" />
+                      INDIVIDUAL
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  {/* Business Name / Client Name */}
+                  <div className="col-span-3">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Business Name *
+                      {formData.client_type === 'BUSINESS' ? 'Business Name *' : 'Client Name *'}
                     </label>
                     <input
                       type="text"
-                      name="business_name"
-                      value={formData.business_name}
+                      name={formData.client_type === 'BUSINESS' ? 'business_name' : 'client_name'}
+                      value={formData.client_type === 'BUSINESS' ? formData.business_name : formData.client_name}
                       onChange={handleInputChange}
                       className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                       required
@@ -419,7 +518,7 @@ const CRM = () => {
                   </div>
 
                   {/* Address */}
-                  <div className="md:col-span-3">
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Address
                     </label>
@@ -463,7 +562,7 @@ const CRM = () => {
                   </div>
 
                   {/* Google Map Link */}
-                  <div className="md:col-span-3">
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Google Map Link
                     </label>
@@ -477,28 +576,31 @@ const CRM = () => {
                     />
                   </div>
 
-                  {/* Category */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Category
-                    </label>
-                    <select
-                      name="category"
-                      value={formData.category}
-                      onChange={handleInputChange}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    >
-                      <option value="">Select Category</option>
-                      <option value="ecommerce">E-commerce</option>
-                      <option value="retail">Retail</option>
-                      <option value="wholesale">Wholesale</option>
-                      <option value="service">Service</option>
-                      <option value="manufacturing">Manufacturing</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-                  {formData.category === 'other' && (
-                    <div className="md:col-span-2">
+                  {/* Category - Only for BUSINESS */}
+                  {formData.client_type === 'BUSINESS' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Category
+                      </label>
+                      <select
+                        name="category"
+                        value={formData.category}
+                        onChange={handleInputChange}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      >
+                        <option value="">Select Category</option>
+                        <option value="ecommerce">E-commerce</option>
+                        <option value="retail">Retail</option>
+                        <option value="wholesale">Wholesale</option>
+                        <option value="service">Service</option>
+                        <option value="manufacturing">Manufacturing</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                  )}
+                  
+                  {formData.category === 'other' && formData.client_type === 'BUSINESS' && (
+                    <div className="col-span-2">
                       <label className="block text-sm font-medium text-gray-700 mb-2">Custom Category</label>
                       <input
                         type="text"

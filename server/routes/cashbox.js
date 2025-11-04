@@ -1,905 +1,564 @@
 const express = require('express');
-const { query, run, usdToLbp, lbpToUsd } = require('../config/database');
-const mcp = require('../mcp');
-const { authenticateToken, requireAnyRole } = require('../middleware/auth');
 const router = express.Router();
+const { authenticateToken } = require('../middleware/auth');
+const mcp = require('../mcp');
 
-// Get cashbox balance (snapshot)
-router.get('/', authenticateToken, async (req, res) => {
+// Helper function to get cashbox data
+async function getCashboxData() {
   try {
-    // First check if we have a cashbox record
-    const result = await query('SELECT * FROM cashbox WHERE id = 1');
-    
-    if (result.length === 0) {
-      // Create initial cashbox record
-      await run(`
-        INSERT INTO cashbox (id, type, amount_usd, amount_lbp, balance_usd, balance_lbp, initial_balance_usd, initial_balance_lbp, description, created_by) 
-        VALUES (1, 'initial', 0, 0, 0, 0, 0, 0, 'Initial cashbox setup', 1)
-      `);
-      
-      res.json({
-        success: true,
-        data: {
-          balance_usd: 0,
-          balance_lbp: 0,
-          initial_balance_usd: 0,
-          initial_balance_lbp: 0
-        }
-      });
-    } else {
-      const balance = result[0];
-      res.json({
-        success: true,
-        data: {
-          balance_usd: parseFloat(balance.balance_usd) || 0,
-          balance_lbp: parseInt(balance.balance_lbp) || 0,
-          initial_balance_usd: parseFloat(balance.initial_balance_usd) || 0,
-          initial_balance_lbp: parseInt(balance.initial_balance_lbp) || 0
-        }
-      });
-    }
-  } catch (error) {
-    console.error('Error fetching cashbox balance:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch cashbox balance',
-      error: error.message 
-    });
-  }
-});
-
-// Get cashbox history
-router.get('/history', authenticateToken, async (req, res) => {
-  try {
-    const { page = 1, limit = 20, type = '' } = req.query;
-    const offset = (page - 1) * limit;
-    
-    let whereClause = '';
-    let params = [];
-
-    if (type) {
-      whereClause = 'WHERE entry_type = ?';
-      params.push(type);
-    }
-
-    // Get total count
-    const countQuery = `SELECT COUNT(*) as count FROM cashbox_entries ${whereClause}`;
-    const countResult = await query(countQuery, params);
-    const totalCount = countResult[0]?.count || 0;
-
-    // Get cashbox entries
-    const historyQuery = `
-      SELECT 
-        c.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name
-      FROM cashbox_entries c
-      LEFT JOIN users u ON c.created_by = u.id
-      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
-      ${whereClause}
-      ORDER BY c.created_at DESC
-      LIMIT ? OFFSET ?
-    `;
-    
-    params.push(limit, offset);
-    const historyResult = await query(historyQuery, params);
-
-    res.json({
-      success: true,
-      data: historyResult || [],
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: totalCount,
-        pages: Math.ceil(totalCount / limit)
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching cashbox history:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch cashbox history',
-      error: error.message,
-      data: [] // Always return empty array on error
-    });
-  }
-});
-
-// Allocate cash to driver/company
-router.post('/allocate', authenticateToken, async (req, res) => {
-  try {
-    const {
-      amount_usd = 0,
-      amount_lbp = 0,
-      description,
-      actor_type = 'driver',
-      actor_id
-    } = req.body;
-
-    if (!actor_id) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Actor ID is required' 
-      });
-    }
-
-    // Check if cashbox has sufficient balance
-    const currentBalance = await getCashboxBalance();
-    if (currentBalance.balance_usd < amount_usd || currentBalance.balance_lbp < amount_lbp) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Insufficient cashbox balance for allocation' 
-      });
-    }
-
-    // Create cashbox entry for allocation
-    const entryData = {
-      entry_type: 'driver_advance',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
-      description: description || 'Cash allocation',
-      actor_type: actor_type,
-      actor_id: actor_id,
-      created_by: req.user.id
+    const result = await mcp.queryWithJoins('SELECT * FROM cashbox WHERE id = 1');
+    return result[0] || {
+      id: 1,
+      balance_usd: 0,
+      balance_lbp: 0,
+      initial_capital_usd: 0,
+      initial_capital_lbp: 0,
+      cash_balance_usd: 0,
+      cash_balance_lbp: 0,
+      wish_balance_usd: 0,
+      wish_balance_lbp: 0
     };
-
-    const entryRes = await mcp.create('cashbox_entries', entryData);
-
-    // Update cashbox balance (debit)
-    const newBalanceUsd = currentBalance.balance_usd - amount_usd;
-    const newBalanceLbp = currentBalance.balance_lbp - amount_lbp;
-    
-    await mcp.update('cashbox', 1, {
-      balance_usd: newBalanceUsd,
-      balance_lbp: newBalanceLbp
-    });
-
-    // Create transaction for allocation
-    await mcp.create('transactions', {
-      tx_type: 'cash_allocation',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
-      actor_type: actor_type,
-      actor_id: actor_id,
-      description: description || 'Cash allocation',
-      category: 'cash_management',
-      direction: 'debit',
-      created_by: req.user.id
-    });
-
-    const entry = await query(`
-      SELECT c.*, u.full_name as created_by_name, d.full_name as driver_name
-      FROM cashbox_entries c
-      LEFT JOIN users u ON c.created_by = u.id
-      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
-      WHERE c.id = ?
-    `, [entryRes.id]);
-
-    res.status(201).json({ 
-      success: true, 
-      message: 'Cash allocated successfully', 
-      data: entry[0] 
-    });
   } catch (error) {
-    console.error('Error allocating cash:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to allocate cash',
-      error: error.message 
-    });
+    console.error('Error getting cashbox data:', error);
+    throw error;
   }
-});
+}
 
-// Return cash from driver/company
-router.post('/return', authenticateToken, async (req, res) => {
+// Helper function to update cashbox balances
+async function updateCashboxBalances(usdDelta, lbpDelta, accountType = 'cash') {
   try {
-    const {
-      amount_usd = 0,
-      amount_lbp = 0,
-      description,
-      actor_type = 'driver',
-      actor_id
-    } = req.body;
-
-    if (!actor_id) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Actor ID is required' 
-      });
-    }
-
-    // Create cashbox entry for return
-    const entryData = {
-      entry_type: 'driver_return',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
-      description: description || 'Cash return',
-      actor_type: actor_type,
-      actor_id: actor_id,
-      created_by: req.user.id
-    };
-
-    const entryRes = await mcp.create('cashbox_entries', entryData);
-
-    // Update cashbox balance (credit)
-    const currentBalance = await getCashboxBalance();
-    const newBalanceUsd = currentBalance.balance_usd + amount_usd;
-    const newBalanceLbp = currentBalance.balance_lbp + amount_lbp;
+    const current = await getCashboxData();
     
-    await mcp.update('cashbox', 1, {
-      balance_usd: newBalanceUsd,
-      balance_lbp: newBalanceLbp,
-      initial_balance_usd: currentBalance.initial_balance_usd || 0,
-      initial_balance_lbp: currentBalance.initial_balance_lbp || 0
-    });
-
-    // Create transaction for return
-    await mcp.create('transactions', {
-      tx_type: 'cash_return',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
-      actor_type: actor_type,
-      actor_id: actor_id,
-      description: description || 'Cash return',
-      category: 'cash_management',
-      direction: 'credit',
-      created_by: req.user.id
-    });
-
-    const entry = await query(`
-      SELECT c.*, u.full_name as created_by_name, d.full_name as driver_name
-      FROM cashbox_entries c
-      LEFT JOIN users u ON c.created_by = u.id
-      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
-      WHERE c.id = ?
-    `, [entryRes.id]);
-
-    res.status(201).json({ 
-      success: true, 
-      message: 'Cash returned successfully', 
-      data: entry[0] 
-    });
-  } catch (error) {
-    console.error('Error returning cash:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to return cash',
-      error: error.message 
-    });
-  }
-});
-
-// Add income - simplified endpoint
-router.post('/income', authenticateToken, async (req, res) => {
-  try {
-    const {
-      amount_usd = 0,
-      amount_lbp = 0,
-      description = 'Income'
-    } = req.body;
-
-    // Validate that at least one amount is provided
-    if (!amount_usd && !amount_lbp) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'At least one amount (USD or LBP) is required' 
-      });
-    }
-
-    // Compute missing currency
-    let incUsd = Number(amount_usd || 0);
-    let incLbp = Number(amount_lbp || 0);
-    if (incUsd > 0 && (!incLbp || incLbp === 0)) incLbp = await usdToLbp(incUsd);
-    if (incLbp > 0 && (!incUsd || incUsd === 0)) incUsd = await lbpToUsd(incLbp);
-
-    // Get current balance
-    const currentBalance = await getCashboxBalance();
-    
-    // Calculate new balance
-    const newBalanceUsd = currentBalance.balance_usd + incUsd;
-    const newBalanceLbp = currentBalance.balance_lbp + incLbp;
-
-    // Create transaction record
-    const transactionData = {
-      tx_type: 'income',
-      amount_usd: incUsd,
-      amount_lbp: incLbp,
-      description: description,
-      category: 'income',
-      direction: 'credit',
-      created_by: req.user.id
+    const updates = {
+      updated_at: new Date().toISOString()
     };
     
-    await mcp.create('transactions', transactionData);
-
-    // Update cashbox balance atomically
-    await mcp.update('cashbox', 1, {
-      balance_usd: newBalanceUsd,
-      balance_lbp: newBalanceLbp
-    });
-
-    res.status(201).json({ 
-      success: true, 
-      message: 'Income added successfully',
-      data: {
-        new_balance_usd: newBalanceUsd,
-        new_balance_lbp: newBalanceLbp
-      }
-    });
+    // Update specific account balance
+    if (accountType === 'cash') {
+      updates.cash_balance_usd = Number(current.cash_balance_usd) + Number(usdDelta);
+      updates.cash_balance_lbp = Number(current.cash_balance_lbp) + Number(lbpDelta);
+      updates.wish_balance_usd = Number(current.wish_balance_usd);
+      updates.wish_balance_lbp = Number(current.wish_balance_lbp);
+    } else if (accountType === 'wish') {
+      updates.cash_balance_usd = Number(current.cash_balance_usd);
+      updates.cash_balance_lbp = Number(current.cash_balance_lbp);
+      updates.wish_balance_usd = Number(current.wish_balance_usd) + Number(usdDelta);
+      updates.wish_balance_lbp = Number(current.wish_balance_lbp) + Number(lbpDelta);
+    }
+    
+    // Main balance is always the sum of cash + wish
+    updates.balance_usd = updates.cash_balance_usd + updates.wish_balance_usd;
+    updates.balance_lbp = updates.cash_balance_lbp + updates.wish_balance_lbp;
+    
+    await mcp.update('cashbox', 1, updates);
+    return await getCashboxData();
   } catch (error) {
-    console.error('Error adding income:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to add income',
-      error: error.message 
-    });
+    console.error('Error updating cashbox balances:', error);
+    throw error;
   }
-});
+}
 
-// Add expense - simplified endpoint
-router.post('/expense', authenticateToken, async (req, res) => {
-  try {
-    const {
-      amount_usd = 0,
-      amount_lbp = 0,
-      description = 'Expense'
-    } = req.body;
-
-    // Validate that at least one amount is provided
-    if (!amount_usd && !amount_lbp) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'At least one amount (USD or LBP) is required' 
-      });
-    }
-
-    // Get current balance
-    const currentBalance = await getCashboxBalance();
-    
-    // Check if there's sufficient balance
-    if (currentBalance.balance_usd < (amount_usd || 0) || currentBalance.balance_lbp < (amount_lbp || 0)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Insufficient cashbox balance for this expense' 
-      });
-    }
-    
-    // Calculate new balance
-    const newBalanceUsd = currentBalance.balance_usd - (amount_usd || 0);
-    const newBalanceLbp = currentBalance.balance_lbp - (amount_lbp || 0);
-
-    // Create transaction record
-    const transactionData = {
-      tx_type: 'expense',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
-      description: description,
-      category: 'expense',
-      direction: 'debit',
-      created_by: req.user.id
-    };
-    
-    await mcp.create('transactions', transactionData);
-
-    // Update cashbox balance atomically
-    await mcp.update('cashbox', 1, {
-      balance_usd: newBalanceUsd,
-      balance_lbp: newBalanceLbp
-    });
-
-    res.status(201).json({ 
-      success: true, 
-      message: 'Expense added successfully',
-      data: {
-        new_balance_usd: newBalanceUsd,
-        new_balance_lbp: newBalanceLbp
-      }
-    });
-  } catch (error) {
-    console.error('Error adding expense:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to add expense',
-      error: error.message 
-    });
-  }
-});
-
-// Assign cash to driver for a date (creates or updates assignment)
-router.post('/assign', authenticateToken, async (req, res) => {
-  try {
-    const { assign_date, driver_id, assigned_usd = 0, assigned_lbp = 0, notes = '' } = req.body;
-
-    if (!driver_id) {
-      return res.status(400).json({ success: false, message: 'Driver ID is required' });
-    }
-
-    // Upsert assignment
-    const upsertQuery = `
-      INSERT INTO cashbox_assignments(assign_date, driver_id, assigned_usd, assigned_lbp, notes, created_by)
-      VALUES(?, ?, ?, ?, ?, ?)
-      ON CONFLICT (assign_date, driver_id) DO UPDATE SET
-        assigned_usd = cashbox_assignments.assigned_usd + EXCLUDED.assigned_usd,
-        assigned_lbp = cashbox_assignments.assigned_lbp + EXCLUDED.assigned_lbp,
-        notes = EXCLUDED.notes
-    `;
-    const resUpsert = await run(upsertQuery, [assign_date || new Date().toISOString().slice(0,10), driver_id, assigned_usd, assigned_lbp, notes, req.user.id]);
-
-    // Record cashbox entry and update snapshot
-    const currentBalance = await getCashboxBalance();
-    await mcp.create('cashbox_entries', {
-      entry_type: 'driver_advance',
-      amount_usd: assigned_usd,
-      amount_lbp: assigned_lbp,
-      actor_type: 'driver',
-      actor_id: driver_id,
-      description: `Assignment for ${assign_date || 'today'}`,
-      created_by: req.user.id
-    });
-    await mcp.update('cashbox', 1, {
-      balance_usd: currentBalance.balance_usd - (assigned_usd || 0),
-      balance_lbp: currentBalance.balance_lbp - (assigned_lbp || 0)
-    });
-
-    res.status(201).json({ success: true, message: 'Assignment recorded' });
-  } catch (error) {
-    console.error('Error assigning cash:', error);
-    res.status(500).json({ success: false, message: 'Failed to assign cash', error: error.message });
-  }
-});
-
-// Refund endpoint adjusts initial balances
-router.post('/refund', authenticateToken, async (req, res) => {
-  try {
-    const { refund_usd = 0, refund_lbp = 0 } = req.body;
-
-    const updateQuery = `
-      UPDATE cashbox 
-      SET initial_balance_usd = initial_balance_usd + ?,
-          initial_balance_lbp = initial_balance_lbp + ?,
-          balance_usd = balance_usd + ?,
-          balance_lbp = balance_lbp + ?,
-          updated_at = now()
-      WHERE id = 1
-    `;
-    await run(updateQuery, [refund_usd, refund_lbp, refund_usd, refund_lbp]);
-
-    // Record cash_in entry
-    await mcp.create('cashbox_entries', {
-      entry_type: 'cash_in',
-      amount_usd: refund_usd,
-      amount_lbp: refund_lbp,
-      description: 'Refund adjustment',
-      actor_type: 'system',
-      actor_id: null,
-      created_by: req.user.id
-    });
-
-    res.json({ success: true, message: 'Refund applied to cashbox balances' });
-  } catch (error) {
-    console.error('Error applying refund:', error);
-    res.status(500).json({ success: false, message: 'Failed to apply refund', error: error.message });
-  }
-});
-
-// Get cashbox entries with pagination and filtering
-router.get('/entries', authenticateToken, async (req, res) => {
-  try {
-    const { page = 1, limit = 20, type = 'all', search = '' } = req.query;
-    const offset = (page - 1) * limit;
-    
-    let whereConditions = [];
-    let params = [];
-
-    if (type && type !== 'all') {
-      whereConditions.push('c.entry_type = ?');
-      params.push(type);
-    }
-
-    if (search) {
-      whereConditions.push('(c.description LIKE ? OR d.full_name LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`);
-    }
-
-    const whereClause = whereConditions.length > 0 
-      ? `WHERE ${whereConditions.join(' AND ')}` 
-      : '';
-
-    // Get total count
-    const countQuery = `
-      SELECT COUNT(*) as count 
-      FROM cashbox_entries c
-      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
-      ${whereClause}
-    `;
-    const countResult = await query(countQuery, params);
-    const totalCount = countResult[0]?.count || 0;
-
-    // Get entries with pagination
-    const entriesQuery = `
-      SELECT 
-        c.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name
-      FROM cashbox_entries c
-      LEFT JOIN users u ON c.created_by = u.id
-      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
-      ${whereClause}
-      ORDER BY c.created_at DESC
-      LIMIT ? OFFSET ?
-    `;
-    
-    params.push(limit, offset);
-    const entriesResult = await query(entriesQuery, params);
-
-    res.json({
-      success: true,
-      data: entriesResult || [],
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: totalCount,
-        pages: Math.ceil(totalCount / limit)
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching cashbox entries:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch cashbox entries',
-      error: error.message,
-      data: [] // Always return empty array on error
-    });
-  }
-});
-
-// Add driver advance
-router.post('/driver-advance', authenticateToken, async (req, res) => {
-  try {
-    const {
-      driver_id,
-      amount_usd = 0,
-      amount_lbp = 0,
-      description
-    } = req.body;
-
-    if (!driver_id) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Driver ID is required' 
-      });
-    }
-
-    // Use MCP layer for entry creation
-    const entryData = {
-      entry_type: 'driver_advance',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
-      description: description || 'Driver advance',
-      actor_type: 'driver',
-      actor_id: driver_id,
-      created_by: req.user.id
-    };
-
-    const entryRes = await mcp.create('cashbox_entries', entryData);
-
-    // Create corresponding transaction for accounting
-    const transactionData = {
-      tx_type: 'driver_advance',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
-      description: description || 'Driver advance',
-      actor_type: 'driver',
-      actor_id: driver_id,
-      created_by: req.user.id
-    };
-    
-    await mcp.create('transactions', transactionData);
-
-    // Update snapshot (debit company)
-    const currentBalance = await getCashboxBalance();
-    await mcp.update('cashbox', 1, {
-      balance_usd: currentBalance.balance_usd - (amount_usd || 0),
-      balance_lbp: currentBalance.balance_lbp - (amount_lbp || 0)
-    });
-
-    // Fetch the created entry
-    const entryQuery = `
-      SELECT 
-        c.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name
-      FROM cashbox_entries c
-      LEFT JOIN users u ON c.created_by = u.id
-      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
-      WHERE c.id = ?
-    `;
-    const entryResult = await query(entryQuery, [entryRes.id]);
-
-    res.status(201).json({
-      success: true,
-      message: 'Driver advance created successfully',
-      data: entryResult[0]
-    });
-  } catch (error) {
-    console.error('Error creating driver advance:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to create driver advance',
-      error: error.message 
-    });
-  }
-});
-
-// Add driver return
-router.post('/driver-return', authenticateToken, async (req, res) => {
-  try {
-    const {
-      driver_id,
-      amount_usd = 0,
-      amount_lbp = 0,
-      description
-    } = req.body;
-
-    if (!driver_id) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Driver ID is required' 
-      });
-    }
-
-    // Use MCP layer for entry creation
-    const entryData = {
-      entry_type: 'driver_return',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
-      description: description || 'Driver return',
-      actor_type: 'driver',
-      actor_id: driver_id,
-      created_by: req.user.id
-    };
-
-    const entryRes = await mcp.create('cashbox_entries', entryData);
-
-    // Create corresponding transaction for accounting
-    const transactionData = {
-      tx_type: 'driver_return',
-      amount_usd: amount_usd || 0,
-      amount_lbp: amount_lbp || 0,
-      description: description || 'Driver return',
-      actor_type: 'driver',
-      actor_id: driver_id,
-      created_by: req.user.id
-    };
-    
-    await mcp.create('transactions', transactionData);
-
-    // Update snapshot (credit company)
-    const currentBalance = await getCashboxBalance();
-    await mcp.update('cashbox', 1, {
-      balance_usd: currentBalance.balance_usd + (amount_usd || 0),
-      balance_lbp: currentBalance.balance_lbp + (amount_lbp || 0)
-    });
-
-    // Fetch the created entry
-    const entryQuery = `
-      SELECT 
-        c.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name
-      FROM cashbox_entries c
-      LEFT JOIN users u ON c.created_by = u.id
-      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
-      WHERE c.id = ?
-    `;
-    const entryResult = await query(entryQuery, [entryRes.id]);
-
-    res.status(201).json({
-      success: true,
-      message: 'Driver return created successfully',
-      data: entryResult[0]
-    });
-  } catch (error) {
-    console.error('Error creating driver return:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to create driver return',
-      error: error.message 
-    });
-  }
-});
-
-// Delete cashbox entry
-router.delete('/entry/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Use MCP layer for delete
-    await mcp.delete('cashbox_entries', id);
-
-    res.json({
-      success: true,
-      message: 'Entry deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting cashbox entry:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to delete entry',
-      error: error.message 
-    });
-  }
-});
-
-// Export cashbox data
-router.get('/export', authenticateToken, requireAnyRole(['admin']), async (req, res) => {
-  try {
-    const { format = 'pdf', from, to } = req.query;
-    
-    let whereClause = 'WHERE 1=1';
-    let params = [];
-
-    if (from) {
-      whereClause += ' AND c.created_at >= ?';
-      params.push(from);
-    }
-
-    if (to) {
-      whereClause += ' AND c.created_at <= ?';
-      params.push(to);
-    }
-
-    const exportQuery = `
-      SELECT 
-        c.*,
-        u.full_name as created_by_name,
-        d.full_name as driver_name
-      FROM cashbox_entries c
-      LEFT JOIN users u ON c.created_by = u.id
-      LEFT JOIN drivers d ON (c.actor_type = 'driver' AND c.actor_id = d.id)
-      ${whereClause}
-      ORDER BY c.created_at DESC
-    `;
-    
-    const result = await query(exportQuery, params);
-
-    if (format === 'csv') {
-      // Generate CSV content
-      const csvContent = [
-        'Date,Type,Amount USD,Amount LBP,Description,Driver,Created By',
-              ...result.map(row => [
-        new Date(row.created_at).toLocaleDateString(),
-        row.entry_type,
-        row.amount_usd || 0,
-        row.amount_lbp || 0,
-        row.description || '',
-        row.driver_name || '',
-        row.created_by_name || ''
-      ].join(','))
-      ].join('\n');
-
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=cashbox-export.csv');
-      res.send(csvContent);
-    } else {
-      // Generate PDF content (simplified)
-      const pdfContent = `
-        CASHBOX REPORT
-        ===============
-        
-        Period: ${from || 'All time'} to ${to || 'Now'}
-        Generated: ${new Date().toLocaleDateString()}
-        
-        ${result.map(row => `
-        Date: ${new Date(row.created_at).toLocaleDateString()}
-        Type: ${row.entry_type}
-        Amount: $${row.amount_usd || 0} / ${(row.amount_lbp || 0).toLocaleString()} LBP
-        Description: ${row.description || 'N/A'}
-        Driver: ${row.driver_name || 'N/A'}
-        Created By: ${row.created_by_name || 'System'}
-        `).join('\n')}
-      `;
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename=cashbox-export.pdf');
-      res.send(Buffer.from(pdfContent, 'utf8'));
-    }
-  } catch (error) {
-    console.error('Error exporting cashbox data:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to export cashbox data',
-      error: error.message 
-    });
-  }
-});
-
-// Get cashbox balance
+// Get cashbox overview
 router.get('/balance', authenticateToken, async (req, res) => {
   try {
-    const balanceQuery = `
-      SELECT 
-        COALESCE(SUM(CASE WHEN entry_type IN ('cash_in', 'driver_return', 'client_payment') THEN amount_usd ELSE -amount_usd END), 0) as balance_usd,
-        COALESCE(SUM(CASE WHEN entry_type IN ('cash_in', 'driver_return', 'client_payment') THEN amount_lbp ELSE -amount_lbp END), 0) as balance_lbp
-      FROM cashbox_entries
-    `;
-    
-    const result = await query(balanceQuery);
-    const balance = result[0] || {};
-
+    const cashboxData = await getCashboxData();
     res.json({
       success: true,
-      data: {
-        balance_usd: parseFloat(balance.balance_usd) || 0,
-        balance_lbp: parseInt(balance.balance_lbp) || 0
-      }
+      data: cashboxData
     });
   } catch (error) {
     console.error('Error fetching cashbox balance:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to fetch cashbox balance',
-      error: error.message 
+      error: error.message
     });
   }
 });
 
-// Get recent cashbox timeline
+// Get cashbox timeline/history
 router.get('/timeline', authenticateToken, async (req, res) => {
   try {
-    const { limit = 10 } = req.query;
+    const { limit = 10, offset = 0, type = 'all' } = req.query;
     
-    const timelineQuery = `
-      SELECT 
-        t.id,
-        t.tx_type,
-        t.amount_usd,
-        t.amount_lbp,
-        t.description,
-        t.category,
-        t.direction,
-        t.created_at,
-        u.full_name as created_by_name
-      FROM transactions t
-      LEFT JOIN users u ON t.created_by = u.id
-      WHERE t.category IN ('income', 'expense', 'cash_management')
-      ORDER BY t.created_at DESC
-      LIMIT $1
-    `;
+    let whereClause = '';
+    const params = [];
     
-    const timeline = await query(timelineQuery, [limit]);
-
+    if (type !== 'all') {
+      whereClause = 'WHERE entry_type = $1';
+      params.push(type);
+    }
+    
+    const entries = await mcp.queryWithJoins(`
+      SELECT ce.*, u.full_name as created_by_name
+      FROM cashbox_entries ce
+      LEFT JOIN users u ON ce.created_by = u.id
+      ${whereClause}
+      ORDER BY ce.created_at DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `, [...params, parseInt(limit), parseInt(offset)]);
+    
+    // Transform for frontend compatibility
+    const transformedEntries = entries.map(entry => ({
+      ...entry,
+      tx_type: entry.entry_type // Map to expected field name
+    }));
+    
     res.json({
       success: true,
-      data: timeline || []
+      data: transformedEntries
     });
   } catch (error) {
     console.error('Error fetching cashbox timeline:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to fetch cashbox timeline',
-      error: error.message 
+      error: error.message
     });
   }
 });
 
-// Helper function to get cashbox balance
-async function getCashboxBalance() {
+// Set initial capital
+router.post('/capital', authenticateToken, async (req, res) => {
   try {
-    const result = await query('SELECT * FROM cashbox WHERE id = 1');
-    if (result.length === 0) {
-      // Create initial cashbox record if it doesn't exist
-      await run(`
-        INSERT INTO cashbox (id, type, amount_usd, amount_lbp, balance_usd, balance_lbp, initial_balance_usd, initial_balance_lbp, description, created_by) 
-        VALUES (1, 'initial', 0, 0, 0, 0, 0, 0, 'Initial cashbox setup', 1)
-      `);
-      return { balance_usd: 0, balance_lbp: 0 };
+    const { amount_usd = 0, amount_lbp = 0, account_type = 'cash', description = 'Initial capital setup' } = req.body;
+    const userId = req.user.id;
+    
+    
+    // Update cashbox with initial capital
+    const updates = {
+      initial_capital_usd: Number(amount_usd),
+      initial_capital_lbp: Number(amount_lbp),
+      capital_set_at: new Date().toISOString(),
+      capital_set_by: userId,
+      updated_at: new Date().toISOString()
+    };
+    
+    // Add to the selected account
+    if (account_type === 'cash') {
+      updates.cash_balance_usd = Number(amount_usd);
+      updates.cash_balance_lbp = Number(amount_lbp);
+      updates.wish_balance_usd = 0;
+      updates.wish_balance_lbp = 0;
+    } else if (account_type === 'wish') {
+      updates.cash_balance_usd = 0;
+      updates.cash_balance_lbp = 0;
+      updates.wish_balance_usd = Number(amount_usd);
+      updates.wish_balance_lbp = Number(amount_lbp);
     }
-    return result[0] || { balance_usd: 0, balance_lbp: 0 };
+    
+    // Main balance is always the sum of cash + wish
+    updates.balance_usd = updates.cash_balance_usd + updates.wish_balance_usd;
+    updates.balance_lbp = updates.cash_balance_lbp + updates.wish_balance_lbp;
+    
+    await mcp.update('cashbox', 1, updates);
+    
+    // Create cashbox entry for capital
+    await mcp.create('cashbox_entries', {
+      entry_type: 'capital_add',
+      amount_usd: Number(amount_usd),
+      amount_lbp: Number(amount_lbp),
+      account_type,
+      description,
+      created_by: userId,
+      created_at: new Date().toISOString()
+    });
+    
+    const updatedCashbox = await getCashboxData();
+    
+    res.json({
+      success: true,
+      message: 'Capital set successfully',
+      data: updatedCashbox
+    });
   } catch (error) {
-    console.error('Error getting cashbox balance:', error);
-    return { balance_usd: 0, balance_lbp: 0 };
+    console.error('Error setting capital:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to set capital',
+      error: error.message
+    });
   }
-}
+});
+
+// Edit capital
+router.put('/capital', authenticateToken, async (req, res) => {
+  try {
+    const { amount_usd = 0, amount_lbp = 0, account_type = 'cash', description = 'Capital adjustment' } = req.body;
+    const userId = req.user.id;
+    
+    const current = await getCashboxData();
+    
+    // Calculate the difference
+    const usdDiff = Number(amount_usd) - Number(current.initial_capital_usd);
+    const lbpDiff = Number(amount_lbp) - Number(current.initial_capital_lbp);
+    
+    // Update cashbox
+    const updates = {
+      initial_capital_usd: Number(amount_usd),
+      initial_capital_lbp: Number(amount_lbp),
+      capital_set_at: new Date().toISOString(),
+      capital_set_by: userId,
+      updated_at: new Date().toISOString()
+    };
+    
+    // Apply the difference to the selected account
+    if (account_type === 'cash') {
+      updates.cash_balance_usd = Number(current.cash_balance_usd) + usdDiff;
+      updates.cash_balance_lbp = Number(current.cash_balance_lbp) + lbpDiff;
+      updates.wish_balance_usd = Number(current.wish_balance_usd);
+      updates.wish_balance_lbp = Number(current.wish_balance_lbp);
+    } else if (account_type === 'wish') {
+      updates.cash_balance_usd = Number(current.cash_balance_usd);
+      updates.cash_balance_lbp = Number(current.cash_balance_lbp);
+      updates.wish_balance_usd = Number(current.wish_balance_usd) + usdDiff;
+      updates.wish_balance_lbp = Number(current.wish_balance_lbp) + lbpDiff;
+    }
+    
+    // Main balance is always the sum of cash + wish
+    updates.balance_usd = updates.cash_balance_usd + updates.wish_balance_usd;
+    updates.balance_lbp = updates.cash_balance_lbp + updates.wish_balance_lbp;
+    
+    await mcp.update('cashbox', 1, updates);
+    
+    // Create cashbox entry for capital edit
+    await mcp.create('cashbox_entries', {
+      entry_type: 'capital_edit',
+      amount_usd: usdDiff,
+      amount_lbp: lbpDiff,
+      account_type,
+      description,
+      created_by: userId,
+      created_at: new Date().toISOString()
+    });
+    
+    const updatedCashbox = await getCashboxData();
+    
+    res.json({
+      success: true,
+      message: 'Capital updated successfully',
+      data: updatedCashbox
+    });
+  } catch (error) {
+    console.error('Error updating capital:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update capital',
+      error: error.message
+    });
+  }
+});
+
+// Add income
+router.post('/income', authenticateToken, async (req, res) => {
+  try {
+    const { 
+      amount_usd = 0, 
+      amount_lbp = 0, 
+      description, 
+      account_type = 'cash',
+      notes = '',
+      order_id = null
+    } = req.body;
+    
+    const userId = req.user.id;
+    
+    if (!description) {
+      return res.status(400).json({
+        success: false,
+        message: 'Description is required'
+      });
+    }
+    
+    // Update cashbox balances
+    await updateCashboxBalances(amount_usd, amount_lbp, account_type);
+    
+    // Create cashbox entry
+    await mcp.create('cashbox_entries', {
+      entry_type: 'income',
+      amount_usd: Number(amount_usd),
+      amount_lbp: Number(amount_lbp),
+      account_type,
+      description,
+      notes,
+      order_id,
+      created_by: userId,
+      created_at: new Date().toISOString()
+    });
+    
+    const updatedCashbox = await getCashboxData();
+    
+    res.json({
+      success: true,
+      message: 'Income added successfully',
+      data: updatedCashbox
+    });
+  } catch (error) {
+    console.error('Error adding income:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add income',
+      error: error.message
+    });
+  }
+});
+
+// Add expense
+router.post('/expense', authenticateToken, async (req, res) => {
+  try {
+    const { 
+      amount_usd = 0, 
+      amount_lbp = 0, 
+      description, 
+      account_type = 'cash',
+      category = '',
+      subcategory = '',
+      notes = ''
+    } = req.body;
+    
+    const userId = req.user.id;
+    
+    if (!description) {
+      return res.status(400).json({
+        success: false,
+        message: 'Description is required'
+      });
+    }
+    
+    // Update cashbox balances (subtract for expenses)
+    await updateCashboxBalances(-amount_usd, -amount_lbp, account_type);
+    
+    // Create cashbox entry
+    await mcp.create('cashbox_entries', {
+      entry_type: 'expense',
+      amount_usd: Number(amount_usd),
+      amount_lbp: Number(amount_lbp),
+      account_type,
+      category,
+      subcategory,
+      description,
+      notes,
+      created_by: userId,
+      created_at: new Date().toISOString()
+    });
+    
+    const updatedCashbox = await getCashboxData();
+    
+    res.json({
+      success: true,
+      message: 'Expense added successfully',
+      data: updatedCashbox
+    });
+  } catch (error) {
+    console.error('Error adding expense:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add expense',
+      error: error.message
+    });
+  }
+});
+
+// Get expense categories
+router.get('/expense-categories', authenticateToken, async (req, res) => {
+  try {
+    const categories = await mcp.queryWithJoins('SELECT * FROM expense_categories ORDER BY title');
+    
+    res.json({
+      success: true,
+      data: categories
+    });
+  } catch (error) {
+    console.error('Error fetching expense categories:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch expense categories',
+      error: error.message
+    });
+  }
+});
+
+// Expense capital (remove from cash or wish)
+router.post('/expense-capital', authenticateToken, async (req, res) => {
+  try {
+    const { 
+      amount_usd = 0, 
+      amount_lbp = 0, 
+      account_type = 'cash', // 'cash' or 'wish'
+      description = 'Capital Expense',
+      category_id = null
+    } = req.body;
+
+    if (amount_usd <= 0 && amount_lbp <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount must be greater than 0'
+      });
+    }
+
+    if (!['cash', 'wish'].includes(account_type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account type must be either cash or wish'
+      });
+    }
+    
+    // Update cashbox balances (subtract for capital expenses)
+    await updateCashboxBalances(-amount_usd, -amount_lbp, account_type);
+    
+    // Create cashbox entry
+    await mcp.create('cashbox_entries', {
+      entry_type: 'capital_expense',
+      amount_usd: Number(amount_usd),
+      amount_lbp: Number(amount_lbp),
+      account_type,
+      description,
+      category_id,
+      created_by: req.user.id,
+      created_at: new Date().toISOString()
+    });
+    
+    const updatedCashbox = await getCashboxData();
+    
+    res.json({
+      success: true,
+      message: 'Capital expense recorded successfully',
+      data: updatedCashbox
+    });
+  } catch (error) {
+    console.error('Error recording capital expense:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to record capital expense',
+      error: error.message
+    });
+  }
+});
+
+// Transfer between accounts (cash <-> wish)
+router.post('/transfer', authenticateToken, async (req, res) => {
+  try {
+    const { 
+      amount_usd = 0, 
+      amount_lbp = 0, 
+      from_account, 
+      to_account, 
+      description = 'Account transfer'
+    } = req.body;
+    
+    const userId = req.user.id;
+    
+    if (!from_account || !to_account || from_account === to_account) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid from_account and to_account are required'
+      });
+    }
+    
+    // Subtract from source account
+    await updateCashboxBalances(-amount_usd, -amount_lbp, from_account);
+    
+    // Add to destination account
+    await updateCashboxBalances(amount_usd, amount_lbp, to_account);
+    
+    // Create entries for both sides of transfer
+    await mcp.create('cashbox_entries', {
+      entry_type: 'cash_out',
+      amount_usd: Number(amount_usd),
+      amount_lbp: Number(amount_lbp),
+      account_type: from_account,
+      description: `Transfer to ${to_account}: ${description}`,
+      created_by: userId,
+      created_at: new Date().toISOString()
+    });
+    
+    await mcp.create('cashbox_entries', {
+      entry_type: 'cash_in',
+      amount_usd: Number(amount_usd),
+      amount_lbp: Number(amount_lbp),
+      account_type: to_account,
+      description: `Transfer from ${from_account}: ${description}`,
+      created_by: userId,
+      created_at: new Date().toISOString()
+    });
+    
+    const updatedCashbox = await getCashboxData();
+    
+    res.json({
+      success: true,
+      message: 'Transfer completed successfully',
+      data: updatedCashbox
+    });
+  } catch (error) {
+    console.error('Error processing transfer:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process transfer',
+      error: error.message
+    });
+  }
+});
+
+// Get detailed cashbox report
+router.get('/report', authenticateToken, async (req, res) => {
+  try {
+    const { from, to, account_type = 'all' } = req.query;
+    
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    
+    let paramIndex = 1;
+    
+    if (from) {
+      whereClause += ` AND created_at >= $${paramIndex}`;
+      params.push(from);
+      paramIndex++;
+    }
+    
+    if (to) {
+      whereClause += ` AND created_at <= $${paramIndex}`;
+      params.push(to);
+      paramIndex++;
+    }
+    
+    if (account_type !== 'all') {
+      whereClause += ` AND account_type = $${paramIndex}`;
+      params.push(account_type);
+      paramIndex++;
+    }
+    
+    const entries = await mcp.queryWithJoins(`
+      SELECT 
+        entry_type,
+        account_type,
+        category,
+        subcategory,
+        SUM(amount_usd) as total_usd,
+        SUM(amount_lbp) as total_lbp,
+        COUNT(*) as count
+      FROM cashbox_entries
+      ${whereClause}
+      GROUP BY entry_type, account_type, category, subcategory
+      ORDER BY entry_type, category, subcategory
+    `, params);
+    
+    const cashboxData = await getCashboxData();
+    
+    res.json({
+      success: true,
+      data: {
+        summary: cashboxData,
+        breakdown: entries
+      }
+    });
+  } catch (error) {
+    console.error('Error generating cashbox report:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate report',
+      error: error.message
+    });
+  }
+});
 
 module.exports = router;

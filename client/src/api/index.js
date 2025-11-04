@@ -1,31 +1,10 @@
 import axios from 'axios';
 
-// Resolve API base URL with environment override, then window, then fallback to deployed URL
-const resolvedBaseUrl = (() => {
-  // Check for environment variable first
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL) {
-    return import.meta.env.VITE_API_BASE_URL;
-  }
-  
-  // Check for window global override
-  if (typeof window !== 'undefined' && window.__API_BASE_URL__) {
-    return window.__API_BASE_URL__;
-  }
-  
-  // Auto-detect environment based on current hostname
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return 'http://localhost:5000/api';
-    }
-    if (hostname.includes('vercel.app')) {
-      return 'https://soufiam-erp-backend.onrender.com/api';
-    }
-  }
-  
-  // Default fallback to deployed URL
-  return 'https://soufiam-erp-backend.onrender.com/api';
-})();
+// Determine API base from env or fallback to relative '/api'
+const resolvedBaseUrl = (import.meta?.env?.VITE_API_BASE_URL)
+  ? import.meta.env.VITE_API_BASE_URL
+  : '/api';
+console.log('🔍 API using base URL:', resolvedBaseUrl);
 
 // Create axios instance
 const api = axios.create({
@@ -218,16 +197,16 @@ api.interceptors.response.use(
               id: 1,
               from_location: 'Beirut',
               to_location: 'Tripoli',
-              price_usd: 25,
-              price_lbp: 375000,
+              total_usd: 25,
+              total_lbp: 375000,
               created_at: new Date().toISOString()
             },
             {
               id: 2,
               from_location: 'Beirut',
               to_location: 'Sidon',
-              price_usd: 15,
-              price_lbp: 225000,
+              total_usd: 15,
+              total_lbp: 225000,
               created_at: new Date().toISOString()
             }
           ]
@@ -246,11 +225,70 @@ api.interceptors.response.use(
             net_profit: 3000,
             currency: 'USD'
           }
+        },
+        '/api/customers/get-or-create': {
+          data: {
+            phone: '71665544',
+            name: 'Test Customer',
+            address: 'Beirut, Lebanon',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          success: true,
+          created: false
         }
       };
 
       const url = error.config?.url;
       const virtualResponse = virtualResponses[url];
+      
+      // Handle dynamic customer search and get-or-create
+      if (url?.includes('/customers/get-or-create')) {
+        const requestData = error.config?.data ? JSON.parse(error.config.data) : {};
+        const phone = requestData.phone || 'unknown';
+        const name = requestData.name || '';
+        
+        console.log(`✅ Virtual customer get-or-create response for phone: ${phone}`);
+        return Promise.resolve({
+          data: {
+            data: {
+              phone: phone,
+              name: name || `Customer ${phone}`,
+              address: 'Beirut, Lebanon',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            },
+            success: true,
+            created: !name // If no name provided, consider it created
+          },
+          status: 200,
+          statusText: 'OK',
+          config: error.config
+        });
+      }
+      
+      // Handle customer search
+      if (url?.includes('/customers/search/')) {
+        const searchTerm = decodeURIComponent(url.split('/customers/search/')[1]);
+        console.log(`✅ Virtual customer search response for: ${searchTerm}`);
+        return Promise.resolve({
+          data: {
+            data: [
+              {
+                phone: searchTerm,
+                name: `Customer ${searchTerm}`,
+                address: 'Beirut, Lebanon',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              }
+            ],
+            success: true
+          },
+          status: 200,
+          statusText: 'OK',
+          config: error.config
+        });
+      }
       
       if (virtualResponse) {
         console.log(`✅ Virtual response provided for: ${url}`);
