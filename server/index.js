@@ -347,22 +347,36 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Helper function to get allowed origin for CORS headers
+function getAllowedOrigin(origin) {
+  if (!origin) return null;
+  const normalized = origin.replace(/\/$/, '');
+  const isAllowed = allowedOrigins.some(o => o.replace(/\/$/, '') === normalized) || isDevLocalhost(origin);
+  return isAllowed ? origin : null;
+}
+
 // API Health check (for client) - with specific rate limiting
 app.options('/api/health', (req, res) => {
   // Handle preflight requests
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  const origin = getAllowedOrigin(req.headers.origin);
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  }
   res.status(200).end();
 });
 
 app.get('/api/health', healthCheckLimiter, (req, res) => {
-  // Set CORS headers explicitly
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  // Set CORS headers explicitly - only for allowed origins
+  const origin = getAllowedOrigin(req.headers.origin);
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  }
   
   res.status(200).json({ 
     status: 'ok', 
